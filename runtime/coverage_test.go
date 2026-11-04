@@ -7,17 +7,20 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 )
 
 type coverageDB struct {
 	*fakeDynamo
-	err      error
-	getOut   *dynamodb.GetItemOutput
-	queryOut *dynamodb.QueryOutput
-	scanOut  *dynamodb.ScanOutput
-	readOut  *dynamodb.TransactGetItemsOutput
+	err          error
+	getOut       *dynamodb.GetItemOutput
+	updateOut    *dynamodb.UpdateItemOutput
+	nilUpdateOut bool
+	queryOut     *dynamodb.QueryOutput
+	scanOut      *dynamodb.ScanOutput
+	readOut      *dynamodb.TransactGetItemsOutput
 }
 
 func (d *coverageDB) GetItem(_ context.Context, in *dynamodb.GetItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error) {
@@ -47,6 +50,12 @@ func (d *coverageDB) UpdateItem(_ context.Context, in *dynamodb.UpdateItemInput,
 	d.fakeDynamo.update = in
 	if d.err != nil {
 		return nil, d.err
+	}
+	if d.nilUpdateOut {
+		return nil, nil
+	}
+	if d.updateOut != nil {
+		return d.updateOut, nil
 	}
 	return &dynamodb.UpdateItemOutput{}, nil
 }
@@ -349,5 +358,35 @@ func TestOperationAndTransactionErrorBranches(t *testing.T) {
 	}
 	if len(d.write.TransactItems) != 4 || !strings.Contains(*d.write.TransactItems[2].Update.UpdateExpression, "REMOVE") {
 		t.Fatal("transaction operations")
+	}
+}
+
+func TestNextSerialUsesAtomicDynamoDBCounter(t *testing.T) {
+	d := &coverageDB{fakeDynamo: &fakeDynamo{}, updateOut: &dynamodb.UpdateItemOutput{Attributes: map[string]types.AttributeValue{"value": &types.AttributeValueMemberN{Value: "27"}}}}
+	got, err := NextSerial(context.Background(), d, "users")
+	if err != nil || got != 27 {
+		t.Fatalf("serial %d %v", got, err)
+	}
+	in := d.update
+	if aws.ToString(in.TableName) != SequenceTableName || aws.ToString(in.UpdateExpression) != "ADD #value :one" || in.ReturnValues != types.ReturnValueUpdatedNew || in.Key["name"].(*types.AttributeValueMemberS).Value != "users" || in.ExpressionAttributeValues[":one"].(*types.AttributeValueMemberN).Value != "1" {
+		t.Fatalf("unexpected serial update: %#v", in)
+	}
+	d.err = errors.New("offline")
+	if _, err := NextSerial(context.Background(), d, "users"); err == nil {
+		t.Fatal("DynamoDB error")
+	}
+	d.err = nil
+	d.nilUpdateOut = true
+	if _, err := NextSerial(context.Background(), d, "users"); err == nil {
+		t.Fatal("nil response")
+	}
+	d.nilUpdateOut = false
+	d.updateOut = &dynamodb.UpdateItemOutput{Attributes: map[string]types.AttributeValue{"value": StringKey("27")}}
+	if _, err := NextSerial(context.Background(), d, "users"); err == nil {
+		t.Fatal("non-numeric counter")
+	}
+	d.updateOut = &dynamodb.UpdateItemOutput{Attributes: map[string]types.AttributeValue{"value": &types.AttributeValueMemberN{Value: "not-a-number"}}}
+	if _, err := NextSerial(context.Background(), d, "users"); err == nil {
+		t.Fatal("malformed counter")
 	}
 }
