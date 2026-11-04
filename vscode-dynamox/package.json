@@ -2,8 +2,9 @@
   "name": "dynamox-vscode",
   "displayName": "Dynamox",
   "description": "Language support for Dynamox schemas with validation, completions, and formatting.",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "publisher": "dynamox",
+  "icon": "images/icon.png",
   "repository": {
     "type": "git",
     "url": "https://github.com/liberocks/dynamox.git",
