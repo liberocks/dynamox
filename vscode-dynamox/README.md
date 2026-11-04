@@ -6,7 +6,7 @@ Use `@@ttl(field: expiresAt)` to mark a scalar `Int` model field for DynamoDB TT
 
 ## Local development
 
-Go 1.24 or newer is required to build the extension from source. The extension and its editor build helper are written in TypeScript. Install the locked development tools, compile the extension and editor process, then run the unit tests and coverage gate:
+Go 1.24 or newer and Node.js 22.12 or newer are required to build and test the extension from source. The extension and its editor build helper are written in TypeScript. Install the locked development tools, compile the extension and editor process, then run the unit tests and coverage gate:
 
 ```sh
 npm ci

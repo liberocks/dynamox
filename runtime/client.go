@@ -140,6 +140,9 @@ func (t Table[T, K]) CreateWithOptions(ctx context.Context, v T, options WriteOp
 	keyField = uniquePlaceholder(names, keyField)
 	names[keyField] = keyName
 	condition = "attribute_not_exists(" + keyField + ")" + conditionSuffix(condition)
+	if len(condition) > maxExpressionBytes {
+		return fmt.Errorf("dynamox: expression exceeds %d bytes", maxExpressionBytes)
+	}
 	_, err = t.DB.PutItem(ctx, &dynamodb.PutItemInput{TableName: aws.String(t.Name), Item: item, ConditionExpression: aws.String(condition), ExpressionAttributeNames: names, ExpressionAttributeValues: values})
 	return err
 }
@@ -443,13 +446,17 @@ func (t Table[T, K]) CreateOperation(v T, options WriteOptions) (WriteItem, erro
 	}
 	names[pk] = keyName
 	text := "attribute_not_exists(" + pk + ")" + conditionSuffix(condition)
+	if len(text) > maxExpressionBytes {
+		return WriteItem{}, fmt.Errorf("dynamox: expression exceeds %d bytes", maxExpressionBytes)
+	}
 	rawValues := map[string]any{}
 	if options.Condition != nil {
 		for k, v := range options.Condition.Values {
 			rawValues[k] = v
 		}
 	}
-	return WriteItem{Table: t.Name, Put: i, Condition: &Expression{Text: text, Names: names, Values: rawValues}, CreateOnly: true}, nil
+	createCondition := &Expression{Text: text, Names: names, Values: rawValues}
+	return WriteItem{Table: t.Name, Put: i, Condition: createCondition, CreateOnly: true}, nil
 }
 func (t Table[T, K]) DeleteOperation(key K) (WriteItem, error) {
 	return t.DeleteOperationWithOptions(key, WriteOptions{})
@@ -521,16 +528,16 @@ func TransactWrite(ctx context.Context, db DynamoAPI, items ...WriteItem) error 
 	}
 	req := make([]types.TransactWriteItem, 0, len(items))
 	for _, i := range items {
+		names, values, _, err := expressionMaps(i.Condition)
+		if err != nil {
+			return err
+		}
 		switch {
 		case i.Put != nil:
 			put := &types.Put{TableName: aws.String(i.Table), Item: i.Put}
 			setCondition(&put.ConditionExpression, i.Condition)
 			if i.Condition != nil {
-				put.ExpressionAttributeNames = nonEmptyNames(i.Condition.Names)
-				values, e := marshalExpressionValues(i.Condition.Values)
-				if e != nil {
-					return e
-				}
+				put.ExpressionAttributeNames = nonEmptyNames(names)
 				put.ExpressionAttributeValues = values
 			}
 			req = append(req, types.TransactWriteItem{Put: put})
@@ -552,10 +559,6 @@ func TransactWrite(ctx context.Context, db DynamoAPI, items ...WriteItem) error 
 						return fmt.Errorf("dynamox: update field %q is removed more than once", name)
 					}
 				}
-			}
-			names, values, _, err := expressionMaps(i.Condition)
-			if err != nil {
-				return err
 			}
 			if values == nil {
 				values = map[string]types.AttributeValue{}
@@ -600,11 +603,7 @@ func TransactWrite(ctx context.Context, db DynamoAPI, items ...WriteItem) error 
 		case i.Key != nil:
 			d := &types.Delete{TableName: aws.String(i.Table), Key: i.Key}
 			if i.Condition != nil {
-				d.ExpressionAttributeNames = nonEmptyNames(i.Condition.Names)
-				values, e := marshalExpressionValues(i.Condition.Values)
-				if e != nil {
-					return e
-				}
+				d.ExpressionAttributeNames = nonEmptyNames(names)
 				d.ExpressionAttributeValues = values
 			}
 			setCondition(&d.ConditionExpression, i.Condition)
@@ -621,6 +620,9 @@ func expressionMaps(e *Expression) (map[string]string, map[string]types.Attribut
 	names := map[string]string{}
 	text := ""
 	if e != nil {
+		if err := validateExpression(e); err != nil {
+			return nil, nil, "", err
+		}
 		for k, v := range e.Names {
 			names[k] = v
 		}

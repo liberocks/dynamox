@@ -6,6 +6,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"strconv"
@@ -39,7 +40,7 @@ func main() {
 
 func serve(input io.Reader, output io.Writer) error {
 	scanner := bufio.NewScanner(input)
-	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
+	scanner.Buffer(make([]byte, 64*1024), 4*schema.MaxSourceBytes)
 	writer := bufio.NewWriter(output)
 	for scanner.Scan() {
 		var req request
@@ -66,6 +67,10 @@ func writeResponse(writer *bufio.Writer, res response) error {
 
 func handle(req request) response {
 	res := response{ID: req.ID}
+	if len(req.Text) > schema.MaxSourceBytes {
+		res.Error = fmt.Sprintf("schema exceeds the %d-byte editor limit", schema.MaxSourceBytes)
+		return res
+	}
 	if req.Method != "validate" && req.Method != "format" {
 		res.Error = "unknown method " + strconv.Quote(req.Method)
 		return res

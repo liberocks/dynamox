@@ -24,6 +24,9 @@ type token struct {
 	pos  Position
 }
 
+// MaxSourceBytes bounds schema parsing and formatting work for untrusted input.
+const MaxSourceBytes = 1024 * 1024
+
 func lex(src string) ([]token, error) {
 	var out []token
 	line, col := 1, 1
@@ -126,6 +129,9 @@ type parser struct {
 }
 
 func Parse(src string) (*Schema, error) {
+	if len(src) > MaxSourceBytes {
+		return nil, fmt.Errorf("schema exceeds the %d-byte limit", MaxSourceBytes)
+	}
 	t, err := lex(src)
 	if err != nil {
 		return nil, err

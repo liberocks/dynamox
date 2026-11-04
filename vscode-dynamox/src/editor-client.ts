@@ -18,6 +18,7 @@ export interface EditorResponse {
 }
 
 export type EditorMethod = "validate" | "format";
+const maxSchemaBytes = 1024 * 1024;
 
 interface PendingRequest {
   resolve: (response: EditorResponse) => void;
@@ -27,7 +28,7 @@ interface PendingRequest {
 export interface EditorClientDependencies {
   platform?: NodeJS.Platform;
   architecture?: string;
-  existsSync?: typeof fs.existsSync;
+  lstatSync?: typeof fs.lstatSync;
   spawn?: typeof childProcess.spawn;
 }
 
@@ -43,13 +44,29 @@ export class EditorClient {
   ) {
     const platform = dependencies.platform ?? process.platform;
     const architecture = dependencies.architecture ?? process.arch;
-    const goos = platform === "win32" ? "windows" : platform === "darwin" ? "darwin" : "linux";
-    const goarch = architecture === "x64" ? "amd64" : architecture;
+    const goosByPlatform: Partial<Record<NodeJS.Platform, string>> = { darwin: "darwin", linux: "linux", win32: "windows" };
+    const goarchByArchitecture: Record<string, string | undefined> = { x64: "amd64", arm64: "arm64" };
+    const goos = goosByPlatform[platform];
+    const goarch = goarchByArchitecture[architecture];
+    if (!goos || !goarch) {
+      outputChannel.appendLine(`Dynamox editor process is unavailable for ${platform}/${architecture}`);
+      return;
+    }
     const suffix = goos === "windows" ? ".exe" : "";
-    const binary = path.join(extensionPath, "bin", `dynamox-editor-${goos}-${goarch}${suffix}`);
-    const existsSync = dependencies.existsSync ?? fs.existsSync;
-    if (!existsSync(binary)) {
+    const binDirectory = path.join(extensionPath, "bin");
+    const binary = path.join(binDirectory, `dynamox-editor-${goos}-${goarch}${suffix}`);
+    const lstatSync = dependencies.lstatSync ?? fs.lstatSync;
+    let binStat: fs.Stats;
+    let binaryStat: fs.Stats;
+    try {
+      binStat = lstatSync(binDirectory);
+      binaryStat = lstatSync(binary);
+    } catch {
       outputChannel.appendLine(`Dynamox editor process is missing: ${binary}`);
+      return;
+    }
+    if (!binStat.isDirectory() || binStat.isSymbolicLink() || !binaryStat.isFile() || binaryStat.isSymbolicLink()) {
+      outputChannel.appendLine("Dynamox editor process path is not a regular bundled file.");
       return;
     }
 
@@ -70,6 +87,9 @@ export class EditorClient {
   }
 
   request(method: EditorMethod, text: string): Promise<EditorResponse> {
+    if (Buffer.byteLength(text, "utf8") > maxSchemaBytes) {
+      return Promise.reject(new Error(`Dynamox schema exceeds the ${maxSchemaBytes}-byte editor limit`));
+    }
     const editorProcess = this.editorProcess;
     if (!editorProcess || !editorProcess.stdin.writable) {
       return Promise.reject(new Error("Dynamox editor process is unavailable"));

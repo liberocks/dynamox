@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,7 +49,12 @@ func run(args []string) error {
 	}
 }
 func read(path string) (string, *schema.Schema, error) {
-	src, err := os.ReadFile(path)
+	file, err := os.Open(path)
+	if err != nil {
+		return "", nil, err
+	}
+	defer file.Close()
+	src, err := readSource(file)
 	if err != nil {
 		return "", nil, err
 	}
@@ -57,6 +63,17 @@ func read(path string) (string, *schema.Schema, error) {
 		return "", nil, fmt.Errorf("%s: %w", path, err)
 	}
 	return string(src), s, nil
+}
+
+func readSource(source io.Reader) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(source, schema.MaxSourceBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > schema.MaxSourceBytes {
+		return nil, fmt.Errorf("schema exceeds the %d-byte limit", schema.MaxSourceBytes)
+	}
+	return data, nil
 }
 func validate(path string, s *schema.Schema) error {
 	ds := schema.Validate(s)
@@ -94,6 +111,9 @@ func runFmt(args []string) error {
 			return fmt.Errorf("%s is not formatted", path)
 		}
 		return nil
+	}
+	if err := ensureRegularWriteTarget(path, false); err != nil {
+		return err
 	}
 	return os.WriteFile(path, []byte(formatted), 0644)
 }
@@ -151,12 +171,30 @@ func runGenerate(args []string) error {
 	if err = os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
 		return err
 	}
+	if err = ensureRegularWriteTarget(dest, true); err != nil {
+		return err
+	}
 	if err = os.WriteFile(dest, data, 0644); err != nil {
 		return err
 	}
 	fmt.Printf("generated %s\n", dest)
 	return nil
 }
+
+func ensureRegularWriteTarget(path string, allowMissing bool) error {
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) && allowMissing {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("refusing to write non-regular file %q", path)
+	}
+	return nil
+}
+
 func runSync(args []string) error {
 	return runSyncWith(args, loadAWSConfig, syncUsingSDK)
 }

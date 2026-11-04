@@ -67,6 +67,11 @@ model Entry {
 	if _, err := Generate(s, "invalid-package"); err == nil {
 		t.Fatal("expected formatter error for invalid package")
 	}
+	for _, packageName := range []string{"package", "_", "x; import \"os\""} {
+		if _, err := Generate(s, packageName); err == nil {
+			t.Errorf("Generate accepted unsafe package name %q", packageName)
+		}
+	}
 	bad := &schema.Schema{}
 	if _, err := Generate(bad, "x"); err == nil {
 		t.Fatal("expected schema validation error")
@@ -113,6 +118,12 @@ func TestGeneratorHelperEdgeCases(t *testing.T) {
 	generateRelation(&b, schema.Model{Name: "Entry"}, schema.Relation{Target: "Missing"}, &schema.Schema{})
 	if b.Len() != 0 {
 		t.Fatal("missing relation target should be ignored")
+	}
+}
+
+func TestFormatGeneratedReturnsFormattingErrors(t *testing.T) {
+	if _, err := formatGenerated([]byte("package")); err == nil || !strings.Contains(err.Error(), "format generated Go") {
+		t.Fatalf("formatGenerated did not report invalid Go source: %v", err)
 	}
 }
 

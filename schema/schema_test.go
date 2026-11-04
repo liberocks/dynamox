@@ -40,6 +40,16 @@ func TestFormatIsStableAndPreservesComments(t *testing.T) {
 	}
 }
 
+func TestParserAndFormatterRejectOversizedSource(t *testing.T) {
+	source := strings.Repeat(" ", MaxSourceBytes+1)
+	if _, err := Parse(source); err == nil || !strings.Contains(err.Error(), "byte limit") {
+		t.Fatalf("Parse accepted oversized source: %v", err)
+	}
+	if _, err := Format(source); err == nil || !strings.Contains(err.Error(), "byte limit") {
+		t.Fatalf("Format accepted oversized source: %v", err)
+	}
+}
+
 func TestFormatSeparatesTopLevelBlocksAndKeepsCommentsWithNextBlock(t *testing.T) {
 	src := `model First {
   id String @id

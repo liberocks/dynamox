@@ -151,6 +151,9 @@ func TestConditionalTransactionKeepsAWSFailureType(t *testing.T) {
 }
 
 func TestConditionValueEncodingErrorsAreReturned(t *testing.T) {
+	if _, err := marshalExpressionValues(map[string]any{":status": expressionMarshalFailure{}}); err == nil {
+		t.Fatal("marshalExpressionValues should return DynamoDB encoding errors")
+	}
 	table := testTable(&optionDB{fakeDynamo: &fakeDynamo{}})
 	condition := WriteOptions{Condition: &Expression{Text: "#status = :status", Names: map[string]string{"#status": "status"}, Values: map[string]any{":status": make(chan int)}}}
 	if err := table.CreateWithOptions(context.Background(), testRecord{ID: "x"}, condition); err == nil {
@@ -192,6 +195,22 @@ func TestConditionValueEncodingErrorsAreReturned(t *testing.T) {
 		if err := TransactWrite(context.Background(), table.DB, item); err == nil {
 			t.Fatalf("expected transaction condition value encoding error: %#v", item)
 		}
+	}
+	manualInvalidWrite := WriteItem{Table: "records", Put: map[string]types.AttributeValue{"id": StringKey("x")}, Condition: &Expression{Text: "#name = :value", Values: map[string]any{":value": "x"}}}
+	if err := TransactWrite(context.Background(), table.DB, manualInvalidWrite); err == nil {
+		t.Fatal("transaction accepted an unbound expression placeholder")
+	}
+}
+
+func TestCreateConditionSizeIncludesGeneratedCreateGuard(t *testing.T) {
+	table := testTable(&optionDB{fakeDynamo: &fakeDynamo{}})
+	condition := &Expression{Text: strings.Repeat("x", maxExpressionBytes-10)}
+	err := table.CreateWithOptions(context.Background(), testRecord{ID: "x"}, WriteOptions{Condition: condition})
+	if err == nil || !strings.Contains(err.Error(), "expression exceeds") {
+		t.Fatalf("create accepted an oversized combined expression: %v", err)
+	}
+	if _, err := table.CreateOperation(testRecord{ID: "x"}, WriteOptions{Condition: condition}); err == nil || !strings.Contains(err.Error(), "expression exceeds") {
+		t.Fatalf("CreateOperation accepted an oversized combined expression: %v", err)
 	}
 }
 

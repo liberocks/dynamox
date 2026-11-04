@@ -117,6 +117,10 @@ func TestCommandDispatchAndMainExit(t *testing.T) {
 }
 
 func TestCLIArgumentAndFileFailures(t *testing.T) {
+	readErr := errors.New("schema source read failed")
+	if _, err := readSource(failingSource{err: readErr}); !errors.Is(err, readErr) {
+		t.Fatalf("readSource did not return the read error: %v", err)
+	}
 	if err := runFmt([]string{"--bad"}); err == nil {
 		t.Fatal("fmt flag error")
 	}
@@ -176,6 +180,13 @@ func TestCLIArgumentAndFileFailures(t *testing.T) {
 	if err := runSyncWith([]string{bad}, nil, nil); err == nil {
 		t.Fatal("sync parse error")
 	}
+	oversized := filepath.Join(dir, "oversized.dynamox")
+	if err := os.WriteFile(oversized, []byte(strings.Repeat(" ", schema.MaxSourceBytes+1)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := read(oversized); err == nil || !strings.Contains(err.Error(), "byte limit") {
+		t.Fatalf("read accepted oversized schema: %v", err)
+	}
 }
 
 func TestCLIFormatValidationAndGenerationErrors(t *testing.T) {
@@ -229,6 +240,31 @@ func TestCLIFormatValidationAndGenerationErrors(t *testing.T) {
 	}
 	if err := runFmt([]string{"--check", path}); err != nil {
 		t.Fatal(err)
+	}
+	missingTarget := filepath.Join(dir, "missing.go")
+	if err := ensureRegularWriteTarget(missingTarget, false); err == nil {
+		t.Fatal("write target validation accepted a missing required file")
+	}
+	victim := filepath.Join(dir, "victim")
+	if err := os.WriteFile(victim, []byte("leave this intact"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	generatedLink := filepath.Join(dir, "generated.go")
+	if err := os.Symlink(victim, generatedLink); err != nil {
+		t.Fatal(err)
+	}
+	if err := runGenerate([]string{"--out", generatedLink, path}); err == nil {
+		t.Fatal("generate followed a symbolic-link output")
+	}
+	formatLink := filepath.Join(dir, "linked-schema.dynamox")
+	if err := os.Symlink(path, formatLink); err != nil {
+		t.Fatal(err)
+	}
+	if err := runFmt([]string{formatLink}); err == nil {
+		t.Fatal("fmt followed a symbolic-link input while writing")
+	}
+	if contents, err := os.ReadFile(victim); err != nil || string(contents) != "leave this intact" {
+		t.Fatalf("symbolic-link output changed its target: %q %v", contents, err)
 	}
 }
 
@@ -342,6 +378,10 @@ func TestLoadAWSConfigAndSyncSDKThroughLocalHTTP(t *testing.T) {
 }
 
 type httpClientFunc func(*http.Request) (*http.Response, error)
+
+type failingSource struct{ err error }
+
+func (r failingSource) Read([]byte) (int, error) { return 0, r.err }
 
 func (f httpClientFunc) Do(r *http.Request) (*http.Response, error) { return f(r) }
 

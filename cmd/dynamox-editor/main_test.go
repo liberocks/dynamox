@@ -8,6 +8,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/liberocks/dynamox/schema"
 )
 
 func TestServeValidatesFormatsAndReportsParseErrors(t *testing.T) {
@@ -20,6 +22,7 @@ func TestServeValidatesFormatsAndReportsParseErrors(t *testing.T) {
 		`not-json`,
 		`{"id":6,"method":"validate","text":"model Session {\n id String @id\n expiresAt String\n @@table(name: \"sessions\", read: 0, write: 1)\n @@ttl(field: expiresAt)\n}"}`,
 		`{"id":7,"method":"format","text":"model Event{\nid String @id\nexpiresAt Int?\n@@table(name:\"events\",read:5,write:2)\n@@index(name:\"ByExpiry\",partition:expiresAt,type:GSI,read:2,write:1)\n@@ttl(field:expiresAt)\n}"}`,
+		`{"id":8,"method":"validate","text":"` + strings.Repeat("x", schema.MaxSourceBytes+1) + `"}`,
 	}, "\n")
 	var output strings.Builder
 	if err := serve(strings.NewReader(input), &output); err != nil {
@@ -33,8 +36,8 @@ func TestServeValidatesFormatsAndReportsParseErrors(t *testing.T) {
 		}
 		responses = append(responses, got)
 	}
-	if len(responses) != 8 {
-		t.Fatalf("got %d responses, want 8: %s", len(responses), output.String())
+	if len(responses) != 9 {
+		t.Fatalf("got %d responses, want 9: %s", len(responses), output.String())
 	}
 	if responses[0].ID != 1 || len(responses[0].Diagnostics) == 0 || !strings.Contains(responses[0].Diagnostics[0].Message, "partition key") {
 		t.Fatalf("validation response: %#v", responses[0])
@@ -59,6 +62,9 @@ func TestServeValidatesFormatsAndReportsParseErrors(t *testing.T) {
 	}
 	if responses[7].ID != 7 || len(responses[7].Diagnostics) != 0 || !strings.Contains(responses[7].Formatted, "read: 5, write: 2") || !strings.Contains(responses[7].Formatted, "@@ttl(field: expiresAt)") {
 		t.Fatalf("TTL/capacity formatting: %#v", responses[7])
+	}
+	if responses[8].ID != 8 || !strings.Contains(responses[8].Error, "editor limit") {
+		t.Fatalf("oversized request was not rejected: %#v", responses[8])
 	}
 }
 

@@ -16,14 +16,31 @@ class FakeProcess extends EventEmitter {
   }
 }
 
-function startClient({ exists = true, platform = process.platform, architecture = process.arch } = {}) {
+function fakeStats(kind) {
+  return {
+    isDirectory() { return kind === "directory"; },
+    isFile() { return kind === "file"; },
+    isSymbolicLink() { return kind === "symlink"; }
+  };
+}
+
+function startClient({ exists = true, platform = process.platform, architecture = process.arch, binaryKind = "file", binKind = "directory" } = {}) {
   const output = { lines: [], text: "", appendLine(value) { this.lines.push(value); }, append(value) { this.text += value; } };
   const child = new FakeProcess();
   const calls = [];
   const client = new EditorClient("/extension", output, {
     platform,
     architecture,
-    existsSync(binary) { calls.push(binary); return exists; },
+    lstatSync(target) {
+      calls.push(target);
+      if (target.endsWith("bin")) return fakeStats(binKind);
+      if (!exists) {
+        const error = new Error("missing");
+        error.code = "ENOENT";
+        throw error;
+      }
+      return fakeStats(binaryKind);
+    },
     spawn(...args) { calls.push(args); return child; }
   });
   return { client, child, output, calls };
@@ -31,7 +48,7 @@ function startClient({ exists = true, platform = process.platform, architecture 
 
 test("reports a missing editor executable and rejects requests", async () => {
   const app = startClient({ exists: false, platform: "win32", architecture: "arm64" });
-  assert.match(app.calls[0], /dynamox-editor-windows-arm64\.exe$/);
+  assert.match(app.calls[1], /dynamox-editor-windows-arm64\.exe$/);
   assert.ok(app.output.lines[0].includes("process is missing"));
   await assert.rejects(app.client.request("validate", "model X {}"), /process is unavailable/);
   app.client.dispose();
@@ -39,7 +56,7 @@ test("reports a missing editor executable and rejects requests", async () => {
 
 test("sends numbered requests, resolves responses, and forwards stderr", async () => {
   const app = startClient({ platform: "darwin", architecture: "x64" });
-  assert.match(app.calls[0], /dynamox-editor-darwin-amd64$/);
+  assert.match(app.calls[1], /dynamox-editor-darwin-amd64$/);
   app.child.stdin.on("data", (chunk) => {
     const request = JSON.parse(String(chunk));
     app.child.stdout.write(`${JSON.stringify({ id: request.id, formatted: request.text.toUpperCase() })}\n`);
@@ -48,6 +65,33 @@ test("sends numbered requests, resolves responses, and forwards stderr", async (
   const result = await app.client.request("format", "model User {}");
   assert.equal(result.formatted, "MODEL USER {}");
   assert.equal(app.output.text, "engine log");
+  app.client.dispose();
+});
+
+test("refuses unsupported targets and symbolic-link binaries", async () => {
+  const unsupported = startClient({ platform: "aix", architecture: "ppc64" });
+  assert.equal(unsupported.calls.length, 0);
+  assert.ok(unsupported.output.lines[0].includes("unavailable for"));
+  await assert.rejects(unsupported.client.request("validate", ""), /process is unavailable/);
+  unsupported.client.dispose();
+
+  const linked = startClient({ binaryKind: "symlink" });
+  assert.equal(linked.calls.length, 2);
+  assert.ok(linked.output.lines[0].includes("not a regular bundled file"));
+  await assert.rejects(linked.client.request("validate", ""), /process is unavailable/);
+  linked.client.dispose();
+
+  const linkedDirectory = startClient({ binKind: "symlink" });
+  assert.equal(linkedDirectory.calls.length, 2);
+  assert.ok(linkedDirectory.output.lines[0].includes("not a regular bundled file"));
+  await assert.rejects(linkedDirectory.client.request("validate", ""), /process is unavailable/);
+  linkedDirectory.client.dispose();
+});
+
+test("rejects an oversized schema before sending it to the editor process", async () => {
+  const app = startClient();
+  await assert.rejects(app.client.request("validate", "x".repeat(1024 * 1024 + 1)), /1048576-byte editor limit/);
+  assert.equal(app.child.stdin.readableLength, 0);
   app.client.dispose();
 });
 

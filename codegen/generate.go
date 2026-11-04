@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"fmt"
 	"go/format"
+	"go/token"
 	"strconv"
 	"strings"
 	"unicode"
@@ -15,6 +16,9 @@ import (
 func Generate(s *schema.Schema, packageName string) ([]byte, error) {
 	if packageName == "" {
 		packageName = "dynamoxgen"
+	}
+	if !token.IsIdentifier(packageName) || packageName == "_" {
+		return nil, fmt.Errorf("invalid Go package name %q", packageName)
 	}
 	if ds := schema.Validate(s); len(ds) > 0 {
 		return nil, fmt.Errorf("%s", ds[0].Error())
@@ -140,9 +144,13 @@ func Generate(s *schema.Schema, packageName string) ([]byte, error) {
 			generateRelation(&b, m, r, s)
 		}
 	}
-	out, err := format.Source(b.Bytes())
+	return formatGenerated(b.Bytes())
+}
+
+func formatGenerated(source []byte) ([]byte, error) {
+	out, err := format.Source(source)
 	if err != nil {
-		return nil, fmt.Errorf("format generated Go: %w\n%s", err, b.String())
+		return nil, fmt.Errorf("format generated Go: %w\n%s", err, source)
 	}
 	return out, nil
 }

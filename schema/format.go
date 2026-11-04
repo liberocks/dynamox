@@ -1,11 +1,15 @@
 package schema
 
 import (
+	"fmt"
 	"strings"
 )
 
 // Format normalizes spacing and indentation while leaving every comment on its original line.
 func Format(src string) (string, error) {
+	if len(src) > MaxSourceBytes {
+		return "", fmt.Errorf("schema exceeds the %d-byte limit", MaxSourceBytes)
+	}
 	toks, err := lex(src)
 	if err != nil {
 		return "", err
