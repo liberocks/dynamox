@@ -1,5 +1,7 @@
 # dynamox
 
+[![Statement coverage: 100%](https://img.shields.io/badge/statement%20coverage-100%25-brightgreen)](https://github.com/liberocks/dynamox/actions/workflows/ci.yml)
+
 dynamox is a schema-first DynamoDB ORM for Go. Each schema model maps to one physical DynamoDB table. Generated methods only query a primary key or a declared secondary index; other fields remain strongly typed model fields and can be read after an item is loaded.
 
 ## Schema
