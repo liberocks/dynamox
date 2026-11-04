@@ -232,6 +232,34 @@ func TestGeneratedCodecsCoverJSONDateTimeAndErrors(t *testing.T) {
 	}
 }
 
+func TestDecodeExistingItemsAfterAddingOrRenamingFields(t *testing.T) {
+	olderItem := map[string]types.AttributeValue{
+		"id":   &types.AttributeValueMemberS{Value: "u-old"},
+		"name": &types.AttributeValueMemberS{Value: "Ada"},
+	}
+	user, err := decodeUser(olderItem)
+	if err != nil {
+		t.Fatalf("decode item without newly added fields: %v", err)
+	}
+	if user.ID != "u-old" || user.Name != "Ada" || user.Preferences != (Preferences{}) || user.Settings != (Preferences{}) || user.Nickname != nil {
+		t.Fatalf("unexpected values for older item: %#v", user)
+	}
+
+	// If a field was renamed in the schema, the old DynamoDB attribute is left
+	// untouched but is not mapped into the newly named Go field.
+	renamedItem := map[string]types.AttributeValue{
+		"id":          &types.AttributeValueMemberS{Value: "u-renamed"},
+		"displayName": &types.AttributeValueMemberS{Value: "Ada"},
+	}
+	renamed, err := decodeUser(renamedItem)
+	if err != nil {
+		t.Fatalf("decode item with old field name: %v", err)
+	}
+	if renamed.Name != "" || renamedItem["displayName"].(*types.AttributeValueMemberS).Value != "Ada" {
+		t.Fatalf("old attribute should remain stored and new field should be empty: %#v %#v", renamed, renamedItem)
+	}
+}
+
 func TestGeneratedClientCRUDQueriesAndOperations(t *testing.T) {
 	ctx := context.Background()
 	d := newGeneratedDynamo()
