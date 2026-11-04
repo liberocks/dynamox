@@ -124,9 +124,17 @@ func Validate(s *Schema) []Diagnostic {
 			reserve(goIdentifier(e.Name)+goIdentifier(v), e.Pos)
 		}
 	}
+	usesSerial := false
+	for i := range s.Models {
+		if f := s.Models[i].Field(s.Models[i].Partition); f != nil && f.Default == "serial" {
+			usesSerial = true
+		}
+	}
 	for _, m := range s.Models {
 		if strings.TrimSpace(m.Table) == "" {
 			add(m.Pos, "model must declare @@table(name: \"...\")")
+		} else if usesSerial && m.Table == "dynamox_sequences" {
+			add(m.Pos, "table name dynamox_sequences is reserved for serial ID generation")
 		} else if previous, ok := tables[m.Table]; ok {
 			add(m.Pos, fmt.Sprintf("table %q is already assigned at %d:%d", m.Table, previous.Line, previous.Column))
 		} else {
@@ -167,6 +175,7 @@ func Validate(s *Schema) []Diagnostic {
 		}
 		seenF := map[string]bool{}
 		for _, f := range m.Fields {
+			defaultCount := 0
 			if seenF[f.Name] {
 				add(f.Pos, "duplicate field "+f.Name)
 			}
@@ -213,6 +222,30 @@ func Validate(s *Schema) []Diagnostic {
 				case "partitionKey", "sortKey", "id", "jsonString":
 					if len(a.Args) > 0 {
 						add(a.Pos, "@"+a.Name+" does not accept arguments")
+					}
+				case "default":
+					defaultCount++
+					if defaultCount > 1 {
+						add(a.Pos, "field may declare only one @default")
+					}
+					generator := strings.ToLower(unquote(a.Args["0"]))
+					if len(a.Args) != 1 || generator == "" {
+						add(a.Pos, "@default requires exactly one ID generator")
+					}
+					if generator != "uuidv1" && generator != "uuidv4" && generator != "uuidv7" && generator != "serial" && generator != "objectid" {
+						add(a.Pos, "unsupported @default ID generator "+generator)
+					}
+					if f.Name != m.Partition {
+						add(a.Pos, "@default ID generator is only allowed on the partition key")
+					}
+					if f.Optional || f.List {
+						add(a.Pos, "@default ID generator requires a required scalar field")
+					}
+					if generator == "serial" && f.Type != "Int" {
+						add(a.Pos, "serial ID generator requires an Int field")
+					}
+					if (generator == "uuidv1" || generator == "uuidv4" || generator == "uuidv7" || generator == "objectid") && f.Type != "String" {
+						add(a.Pos, generator+" ID generator requires a String field")
 					}
 				default:
 					add(a.Pos, "unknown field attribute @"+a.Name)

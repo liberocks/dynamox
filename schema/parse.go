@@ -250,6 +250,9 @@ func (p *parser) parseModel(m *Model) error {
 			if a.Name == "id" {
 				m.Partition = f.Name
 			}
+			if a.Name == "default" {
+				f.Default = strings.ToLower(unquote(a.Args["0"]))
+			}
 		}
 		m.Fields = append(m.Fields, f)
 		for _, a := range f.Attributes {

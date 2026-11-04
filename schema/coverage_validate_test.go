@@ -164,3 +164,42 @@ func TestValidateRelationsCompositeFieldsAndCycles(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+func TestValidateGeneratedIDDefaults(t *testing.T) {
+	valid := `model V1 { id String @id @default(uuidv1) @@table(name: "v1") }
+model V4 { id String @id @default(uuidv4) @@table(name: "v4") }
+model V7 { id String @id @default(uuidv7) @@table(name: "v7") }
+model Object { id String @id @default(objectid) @@table(name: "objects") }
+model Serial { id Int @id @default(serial) @@table(name: "serials") }`
+	s, err := Parse(valid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ds := Validate(s); len(ds) != 0 {
+		t.Fatalf("valid defaults: %v", ds)
+	}
+	for i, want := range []string{"uuidv1", "uuidv4", "uuidv7", "objectid", "serial"} {
+		if got := s.Models[i].Fields[0].Default; got != want {
+			t.Errorf("default %d = %q want %q", i, got, want)
+		}
+	}
+	invalid := `model SerialType { id String @id @default(serial) value String @default(uuidv4) @@table(name: "serial_type") }
+model UUIDType { id Int @id @default(uuidv4) @@table(name: "uuid_type") }
+model Optional { id String? @id @default(uuidv7) @@table(name: "optional") }
+model Missing { id String @id @default @@table(name: "missing") }
+model Unknown { id String @id @default(uuidv3) @@table(name: "unknown") }
+model Multiple { id String @id @default(uuidv1) @default(uuidv4) @@table(name: "multiple") }
+model Named { id String @id @default(strategy: uuidv7) @@table(name: "named") }
+model SerialTable { id Int @id @default(serial) @@table(name: "dynamox_sequences") }`
+	bad, err := Parse(invalid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ds := Validate(bad)
+	joined := diagnosticMessages(ds)
+	for _, want := range []string{"serial ID generator requires an Int field", "@default ID generator is only allowed on the partition key", "uuidv4 ID generator requires a String field", "@default ID generator requires a required scalar field", "@default requires exactly one ID generator", "unsupported @default ID generator", "field may declare only one @default", "reserved for serial ID generation"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("missing %q in diagnostics:\n%s", want, joined)
+		}
+	}
+}

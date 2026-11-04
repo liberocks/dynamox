@@ -20,6 +20,7 @@ type Attribute struct {
 }
 type Field struct {
 	Name, Type     string
+	Default        string
 	List, Optional bool
 	Attributes     []Attribute
 	Pos            Position
