@@ -36,14 +36,25 @@ function complete(text, offset) {
   if (block.kind === "model" && /@@\w*$/.test(trimmed)) {
     add("@@table", "@@table(name: ${1:\"table_name\"})", "Set the DynamoDB table", "snippet");
     add("@@index", "@@index(name: ${1:\"ByField\"}, partition: ${2:field}, type: GSI)", "Declare a global secondary index", "snippet");
+    add("@@ttl", "@@ttl(field: ${1:expiresAt})", "Set the DynamoDB TTL field", "snippet");
     return completions;
   }
 
-  const modelCall = callPrefix.match(/@@(table|index)\(([^)]*)$/);
+  const modelCall = callPrefix.match(/@@(table|index|ttl)\(([^)]*)$/);
   if (modelCall) {
     const attr = modelCall[1];
     const args = modelCall[2];
     const currentArg = args.slice(args.lastIndexOf(",") + 1).trim();
+    if (attr === "ttl") {
+      if (currentArg.startsWith("field:")) {
+        for (const field of currentFields) {
+          if (field.type === "Int" && !field.list) add(field.name, field.name, "TTL field in " + modelName, "field");
+        }
+        return completions;
+      }
+      if (!/(?:^|,)\s*field\s*:/.test(args)) add("field:", "field: ", "TTL argument", "property");
+      return completions;
+    }
     if (currentArg.startsWith("type:")) {
       add("GSI", "GSI", "Global secondary index", "constant");
       add("LSI", "LSI", "Local secondary index", "constant");
@@ -53,7 +64,10 @@ function complete(text, offset) {
       for (const field of currentFields) add(field.name, field.name, "Field in " + modelName, "field");
       return completions;
     }
-    const properties = attr === "table" ? ["name: "] : ["name: ", "partition: ", "sort: ", "type: "];
+    const isLocalIndex = attr === "index" && /(?:^|,)\s*type\s*:\s*LSI\b/i.test(args);
+    const properties = attr === "table"
+      ? ["name: ", "read: ", "write: "]
+      : ["name: ", "partition: ", "sort: ", "type: ", ...(isLocalIndex ? [] : ["read: ", "write: "])];
     for (const property of properties) {
       if (!new RegExp(`(?:^|,)\\s*${property.slice(0, -2)}\\s*:`).test(args)) {
         add(property.trim(), property, `${attr} argument`, "property");
@@ -121,6 +135,7 @@ function complete(text, offset) {
     add("field", "${1:fieldName} ${2:String}", "Add a model field", "snippet");
     add("@@table", "@@table(name: ${1:\"table_name\"})", "Set the DynamoDB table", "snippet");
     add("@@index", "@@index(name: ${1:\"ByField\"}, partition: ${2:field}, type: GSI)", "Declare a global secondary index", "snippet");
+    add("@@ttl", "@@ttl(field: ${1:expiresAt})", "Set the DynamoDB TTL field", "snippet");
     return completions;
   }
   if (block.kind === "type" && trimmed === "") {
@@ -217,8 +232,8 @@ function blockAt(blocks, offset) {
 function fieldsIn(body) {
   const fields = [];
   for (const line of body.split("\n")) {
-    const match = line.match(/^\s*([A-Za-z_]\w*)\s+[A-Za-z_]\w*/);
-    if (match && !match[1].startsWith("@@")) fields.push({ name: match[1] });
+    const match = line.match(/^\s*([A-Za-z_]\w*)\s+([A-Za-z_]\w*)(\[\])?/);
+    if (match && !match[1].startsWith("@@")) fields.push({ name: match[1], type: match[2], list: Boolean(match[3]) });
   }
   return fields;
 }

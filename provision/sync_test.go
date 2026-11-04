@@ -28,6 +28,15 @@ func (f *provisionFake) CreateTable(_ context.Context, in *dynamodb.CreateTableI
 	f.description = &types.TableDescription{TableStatus: types.TableStatusActive, KeySchema: in.KeySchema, GlobalSecondaryIndexes: []types.GlobalSecondaryIndexDescription{}}
 	return &dynamodb.CreateTableOutput{}, nil
 }
+func (f *provisionFake) UpdateTable(context.Context, *dynamodb.UpdateTableInput, ...func(*dynamodb.Options)) (*dynamodb.UpdateTableOutput, error) {
+	return &dynamodb.UpdateTableOutput{}, nil
+}
+func (f *provisionFake) DescribeTimeToLive(context.Context, *dynamodb.DescribeTimeToLiveInput, ...func(*dynamodb.Options)) (*dynamodb.DescribeTimeToLiveOutput, error) {
+	return &dynamodb.DescribeTimeToLiveOutput{}, nil
+}
+func (f *provisionFake) UpdateTimeToLive(context.Context, *dynamodb.UpdateTimeToLiveInput, ...func(*dynamodb.Options)) (*dynamodb.UpdateTimeToLiveOutput, error) {
+	return &dynamodb.UpdateTimeToLiveOutput{}, nil
+}
 
 func TestSyncCreatesMissingTableWithAllProjection(t *testing.T) {
 	db := &provisionFake{missing: true}
@@ -77,5 +86,14 @@ func (f *errorDescribe) DescribeTable(context.Context, *dynamodb.DescribeTableIn
 	return nil, f.err
 }
 func (f *errorDescribe) CreateTable(context.Context, *dynamodb.CreateTableInput, ...func(*dynamodb.Options)) (*dynamodb.CreateTableOutput, error) {
+	return nil, nil
+}
+func (f *errorDescribe) UpdateTable(context.Context, *dynamodb.UpdateTableInput, ...func(*dynamodb.Options)) (*dynamodb.UpdateTableOutput, error) {
+	return nil, nil
+}
+func (f *errorDescribe) DescribeTimeToLive(context.Context, *dynamodb.DescribeTimeToLiveInput, ...func(*dynamodb.Options)) (*dynamodb.DescribeTimeToLiveOutput, error) {
+	return nil, nil
+}
+func (f *errorDescribe) UpdateTimeToLive(context.Context, *dynamodb.UpdateTimeToLiveInput, ...func(*dynamodb.Options)) (*dynamodb.UpdateTimeToLiveOutput, error) {
 	return nil, nil
 }

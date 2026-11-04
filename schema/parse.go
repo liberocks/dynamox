@@ -11,6 +11,7 @@ type tokenKind uint8
 
 const (
 	ident tokenKind = iota
+	numberLit
 	stringLit
 	symbol
 	comment
@@ -72,6 +73,16 @@ func lex(src string) ([]token, error) {
 				return nil, fmt.Errorf("%d:%d: unterminated string", line, col)
 			}
 			out = append(out, token{src[i:j], stringLit, start})
+			col += j - i
+			i = j
+			continue
+		}
+		if unicode.IsDigit(rune(c)) || (c == '-' && i+1 < len(src) && unicode.IsDigit(rune(src[i+1]))) {
+			j := i + 1
+			for j < len(src) && unicode.IsDigit(rune(src[j])) {
+				j++
+			}
+			out = append(out, token{src[i:j], numberLit, start})
 			col += j - i
 			i = j
 			continue
@@ -331,7 +342,7 @@ func (p *parser) parseModelAttr(m *Model) error {
 	switch a.text {
 	case "table":
 		for key := range args {
-			if key != "name" && key != "0" {
+			if key != "name" && key != "0" && key != "read" && key != "write" {
 				return fmt.Errorf("%d:%d: unknown @@table argument %q", a.pos.Line, a.pos.Column, key)
 			}
 		}
@@ -339,19 +350,57 @@ func (p *parser) parseModelAttr(m *Model) error {
 		if m.Table == "" {
 			m.Table = unquote(args["0"])
 		}
+		m.ReadCapacityUnits, err = parseCapacityArg(args, "read", a.pos, "@@table")
+		if err != nil {
+			return err
+		}
+		m.WriteCapacityUnits, err = parseCapacityArg(args, "write", a.pos, "@@table")
+		if err != nil {
+			return err
+		}
 	case "index":
 		for key := range args {
-			if key != "name" && key != "partition" && key != "sort" && key != "type" {
+			if key != "name" && key != "partition" && key != "sort" && key != "type" && key != "read" && key != "write" {
 				return fmt.Errorf("%d:%d: unknown @@index argument %q", a.pos.Line, a.pos.Column, key)
 			}
 		}
 		ix := Index{Name: unquote(args["name"]), Partition: unquote(args["partition"]), Sort: unquote(args["sort"]), Kind: strings.ToUpper(unquote(args["type"])), Pos: a.pos}
+		ix.ReadCapacityUnits, err = parseCapacityArg(args, "read", a.pos, "@@index")
+		if err != nil {
+			return err
+		}
+		ix.WriteCapacityUnits, err = parseCapacityArg(args, "write", a.pos, "@@index")
+		if err != nil {
+			return err
+		}
 		m.Indexes = append(m.Indexes, ix)
+	case "ttl":
+		for key := range args {
+			if key != "field" {
+				return fmt.Errorf("%d:%d: unknown @@ttl argument %q", a.pos.Line, a.pos.Column, key)
+			}
+		}
+		m.TTL = unquote(args["field"])
+		m.TTLPos = a.pos
+		m.TTLCount++
 	default:
 		return fmt.Errorf("%d:%d: unknown model attribute @@%s", a.pos.Line, a.pos.Column, a.text)
 	}
 	return nil
 }
+
+func parseCapacityArg(args map[string]string, key string, pos Position, attribute string) (*int64, error) {
+	raw, ok := args[key]
+	if !ok {
+		return nil, nil
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("%d:%d: %s %s capacity must be an integer", pos.Line, pos.Column, attribute, key)
+	}
+	return &value, nil
+}
+
 func (p *parser) parseAttr() (Attribute, error) {
 	n, err := p.want(ident)
 	if err != nil {

@@ -319,6 +319,8 @@ func TestLoadAWSConfigAndSyncSDKThroughLocalHTTP(t *testing.T) {
 		case "DynamoDB_20120810.CreateTable":
 			status = http.StatusOK
 			body = `{"TableDescription":{"TableName":"sdk-test","TableStatus":"CREATING"}}`
+		case "DynamoDB_20120810.DescribeTimeToLive":
+			body = `{"TimeToLiveDescription":{"TimeToLiveStatus":"DISABLED"}}`
 		default:
 			return nil, errors.New("unexpected target " + r.Header.Get("X-Amz-Target"))
 		}
@@ -344,12 +346,12 @@ type httpClientFunc func(*http.Request) (*http.Response, error)
 func (f httpClientFunc) Do(r *http.Request) (*http.Response, error) { return f(r) }
 
 func TestProvisionTablesAndScalarMapping(t *testing.T) {
-	s, err := schema.Parse(`model Example { id String @id sort Int @sortKey at DateTime amount Float enabled Boolean data Bytes @@table(name: "example") @@index(name: "ByAmount", partition: amount, sort: at, type: GSI) @@index(name: "LocalBySort", sort: sort, type: LSI) }`)
+	s, err := schema.Parse(`model Example { id String @id sort Int @sortKey at DateTime amount Float enabled Boolean expiresAt Int data Bytes @@table(name: "example", read: 4, write: 2) @@index(name: "ByAmount", partition: amount, sort: at, type: GSI, read: 3, write: 1) @@index(name: "LocalBySort", sort: sort, type: LSI) @@ttl(field: expiresAt) }`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := provisionTables(s)
-	if len(got) != 1 || got[0].Partition.Type != "S" || got[0].Indexes[0].Partition.Type != "N" || !got[0].Indexes[1].Local || got[0].Indexes[1].Partition.Name != "id" {
+	if len(got) != 1 || got[0].Partition.Type != "S" || got[0].Indexes[0].Partition.Type != "N" || !got[0].Indexes[1].Local || got[0].Indexes[1].Partition.Name != "id" || got[0].TTL != "expiresAt" || got[0].ReadCapacityUnits != 4 || got[0].WriteCapacityUnits != 2 || got[0].Indexes[0].ReadCapacityUnits != 3 || got[0].Indexes[0].WriteCapacityUnits != 1 {
 		t.Fatalf("provision tables: %#v", got)
 	}
 	for _, tc := range []struct {

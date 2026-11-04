@@ -140,6 +140,20 @@ func Validate(s *Schema) []Diagnostic {
 		} else {
 			tables[m.Table] = m.Pos
 		}
+		validateCapacityPair(add, m.ReadCapacityUnits, m.WriteCapacityUnits, m.Pos, "table")
+		if m.TTLCount > 1 {
+			add(m.TTLPos, "model may declare only one @@ttl")
+		}
+		if m.TTLCount > 0 {
+			if m.TTL == "" {
+				add(m.TTLPos, "@@ttl requires field: fieldName")
+			} else if f := m.Field(m.TTL); f == nil {
+				add(m.TTLPos, "TTL references unknown field "+m.TTL)
+			} else if f.Type != "Int" || f.List || hasAttr(*f, "relation") {
+				add(f.Pos, "TTL field must be a scalar Int field")
+			}
+		}
+		tableProvisioned := m.ReadCapacityUnits != nil && m.WriteCapacityUnits != nil
 		keyCount := 0
 		sortCount := 0
 		for _, f := range m.Fields {
@@ -254,6 +268,7 @@ func Validate(s *Schema) []Diagnostic {
 		}
 		for index := range m.Indexes {
 			a := &m.Indexes[index]
+			validateCapacityPair(add, a.ReadCapacityUnits, a.WriteCapacityUnits, a.Pos, "index "+a.Name)
 			if a.Name == "" {
 				add(a.Pos, "index name is required")
 			}
@@ -267,6 +282,9 @@ func Validate(s *Schema) []Diagnostic {
 				add(a.Pos, "index type must be GSI or LSI")
 			}
 			if a.Kind == "LSI" {
+				if a.ReadCapacityUnits != nil || a.WriteCapacityUnits != nil {
+					add(a.Pos, "LSI shares table throughput and cannot specify capacity")
+				}
 				if a.Sort == "" {
 					add(a.Pos, "LSI requires a sort field")
 				}
@@ -277,6 +295,14 @@ func Validate(s *Schema) []Diagnostic {
 					a.Partition = m.Partition
 				} else if a.Partition != m.Partition {
 					add(a.Pos, "LSI partition must match the table partition key")
+				}
+			}
+			if a.Kind == "GSI" {
+				indexHasCapacity := a.ReadCapacityUnits != nil || a.WriteCapacityUnits != nil
+				if tableProvisioned && !indexHasCapacity {
+					add(a.Pos, "GSI "+a.Name+" requires read and write capacity on provisioned tables")
+				} else if indexHasCapacity && !tableProvisioned {
+					add(a.Pos, "GSI capacity requires table read and write capacity")
 				}
 			}
 			if a.Partition != "" {
@@ -401,6 +427,19 @@ func Validate(s *Schema) []Diagnostic {
 	})
 	return ds
 }
+
+func validateCapacityPair(add func(Position, string), read, write *int64, pos Position, label string) {
+	if (read == nil) != (write == nil) {
+		add(pos, label+" read and write capacity must be specified together")
+	}
+	if read != nil && *read <= 0 {
+		add(pos, label+" read capacity must be positive")
+	}
+	if write != nil && *write <= 0 {
+		add(pos, label+" write capacity must be positive")
+	}
+}
+
 func hasAttr(f Field, name string) bool {
 	for _, a := range f.Attributes {
 		if a.Name == name {

@@ -222,7 +222,10 @@ func provisionTables(s *schema.Schema) []provision.Table {
 	r := make([]provision.Table, 0, len(s.Models))
 	needsSequences := false
 	for _, m := range s.Models {
-		t := provision.Table{Name: m.Table, Partition: provision.Key{Name: m.Partition, Type: scalar(m.Field(m.Partition)), Kind: "HASH"}}
+		t := provision.Table{
+			Name: m.Table, Partition: provision.Key{Name: m.Partition, Type: scalar(m.Field(m.Partition)), Kind: "HASH"},
+			ReadCapacityUnits: capacityValue(m.ReadCapacityUnits), WriteCapacityUnits: capacityValue(m.WriteCapacityUnits), TTL: m.TTL,
+		}
 		if key := m.Field(m.Partition); key != nil && key.Default == "serial" {
 			needsSequences = true
 		}
@@ -234,7 +237,10 @@ func provisionTables(s *schema.Schema) []provision.Table {
 			if strings.EqualFold(i.Kind, "LSI") && partition == "" {
 				partition = m.Partition
 			}
-			ix := provision.Index{Name: i.Name, Local: strings.EqualFold(i.Kind, "LSI"), Partition: provision.Key{Name: partition, Type: scalar(m.Field(partition)), Kind: "HASH"}}
+			ix := provision.Index{
+				Name: i.Name, Local: strings.EqualFold(i.Kind, "LSI"), Partition: provision.Key{Name: partition, Type: scalar(m.Field(partition)), Kind: "HASH"},
+				ReadCapacityUnits: capacityValue(i.ReadCapacityUnits), WriteCapacityUnits: capacityValue(i.WriteCapacityUnits),
+			}
 			if i.Sort != "" {
 				ix.Sort = provision.Key{Name: i.Sort, Type: scalar(m.Field(i.Sort)), Kind: "RANGE"}
 			}
@@ -259,4 +265,11 @@ func scalar(f *schema.Field) types.ScalarAttributeType {
 	default:
 		return types.ScalarAttributeTypeS
 	}
+}
+
+func capacityValue(value *int64) int64 {
+	if value == nil {
+		return 0
+	}
+	return *value
 }
