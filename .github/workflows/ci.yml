@@ -13,8 +13,13 @@ permissions:
 
 jobs:
   test:
-    name: Go tests and coverage
+    name: Go tests, coverage, and emulator benchmarks
     runs-on: ubuntu-latest
+    env:
+      DYNAMODB_ENDPOINT: http://127.0.0.1:8000
+      AWS_ACCESS_KEY_ID: local
+      AWS_SECRET_ACCESS_KEY: local
+      AWS_REGION: us-east-1
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -25,6 +30,28 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Set up Python for Moto
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Install Moto DynamoDB emulator
+        run: python -m pip install 'moto[server]==5.2.4'
+
+      - name: Start Moto DynamoDB emulator
+        shell: bash
+        run: |
+          moto_server -H 127.0.0.1 -p 8000 > "${RUNNER_TEMP}/moto.log" 2>&1 &
+          for attempt in {1..30}; do
+            if curl --silent --output /dev/null http://127.0.0.1:8000/; then
+              echo "Moto is listening on port 8000"
+              exit 0
+            fi
+            sleep 1
+          done
+          cat "${RUNNER_TEMP}/moto.log"
+          exit 1
+
       - name: Run tests with coverage
         run: go test -count=1 -coverprofile=coverage.out ./...
 
@@ -34,3 +61,6 @@ jobs:
           coverage="$(go tool cover -func=coverage.out | awk '$1 == "total:" {print $3}')"
           echo "Total statement coverage: ${coverage}"
           test "${coverage}" = "100.0%"
+
+      - name: Run emulator benchmarks
+        run: go test -run '^$' -bench '^BenchmarkDynamoxRuntime$' -benchmem -count=1 ./runtime
