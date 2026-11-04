@@ -13,6 +13,36 @@ permissions:
   records: read
 
 jobs:
+  vscode-extension:
+    name: VS Code extension checks and package
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Run extension completion tests
+        working-directory: vscode-dynamox
+        run: npm test
+
+      - name: Build editor process
+        working-directory: vscode-dynamox
+        run: npm run compile
+
+      - name: Package Linux x64 extension
+        working-directory: vscode-dynamox
+        run: npx --yes @vscode/vsce@4.0.2 package --no-dependencies --target linux-x64
+
   test:
     name: Go tests, coverage, and emulator benchmarks
     runs-on: ubuntu-latest

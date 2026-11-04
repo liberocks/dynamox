@@ -1,0 +1,33 @@
+{
+  "Dynamox model": {
+    "prefix": "model",
+    "body": [
+      "model ${1:ModelName} {",
+      "  id String @id",
+      "  ${2:name} String",
+      "",
+      "  @@table(name: \"${3:table_name}\")",
+      "}"
+    ],
+    "description": "Create a Dynamox model with a primary key and table"
+  },
+  "Dynamox composite type": {
+    "prefix": "type",
+    "body": [
+      "type ${1:TypeName} {",
+      "  ${2:field} String",
+      "}"
+    ],
+    "description": "Create a composite Dynamox type"
+  },
+  "Dynamox enum": {
+    "prefix": "enum",
+    "body": [
+      "enum ${1:Status} {",
+      "  ${2:READY}",
+      "  ${3:DONE}",
+      "}"
+    ],
+    "description": "Create a Dynamox enum"
+  }
+}

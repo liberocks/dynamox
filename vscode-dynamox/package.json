@@ -1,0 +1,72 @@
+{
+  "name": "dynamox-vscode",
+  "displayName": "Dynamox",
+  "description": "Language support for Dynamox schemas with validation, completions, and formatting.",
+  "version": "0.1.0",
+  "publisher": "dynamox",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/liberocks/dynamox.git",
+    "directory": "vscode-dynamox"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Formatters"
+  ],
+  "keywords": [
+    "dynamodb",
+    "schema",
+    "dynamox"
+  ],
+  "main": "extension.js",
+  "activationEvents": [
+    "onLanguage:dynamox"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "dynamox",
+        "aliases": [
+          "Dynamox",
+          "dynamox"
+        ],
+        "extensions": [
+          ".dynamox"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "dynamox",
+        "scopeName": "source.dynamox",
+        "path": "./syntaxes/dynamox.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "dynamox",
+        "path": "./snippets/dynamox.json"
+      }
+    ],
+    "configuration": {
+      "title": "Dynamox",
+      "properties": {
+        "dynamox.validationDelay": {
+          "type": "number",
+          "default": 300,
+          "minimum": 0,
+          "description": "Delay in milliseconds before validating an edited schema."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "node scripts/build-engine.js",
+    "test": "node --test tests/*.test.js",
+    "vscode:prepublish": "npm run compile"
+  }
+}
