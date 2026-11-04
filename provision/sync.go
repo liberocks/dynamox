@@ -77,7 +77,9 @@ func create(ctx context.Context, db API, t Table) error {
 	var lsis []types.LocalSecondaryIndex
 	for _, ix := range t.Indexes {
 		put(ix.Partition)
-		put(ix.Sort)
+		if ix.Sort.Name != "" {
+			put(ix.Sort)
+		}
 		ks := []types.KeySchemaElement{{AttributeName: aws.String(ix.Partition.Name), KeyType: types.KeyTypeHash}}
 		if ix.Sort.Name != "" {
 			ks = append(ks, types.KeySchemaElement{AttributeName: aws.String(ix.Sort.Name), KeyType: types.KeyTypeRange})
