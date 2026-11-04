@@ -190,7 +190,7 @@ func testDynamoDBLocalWebhookOrdering(t *testing.T, ctx context.Context, db Dyna
 		t.Fatalf("rejected webhook events changed entitlement state: state=%#v found=%v err=%v", unchanged, found, err)
 	}
 	if err := table.Put(ctx, webhookState{ID: state.ID, LastEventAt: "2026-10-13T00:00:00Z", RevokedByRefund: true, SubscriptionID: "sub-1"}, condition("2026-10-13T00:00:00Z", true)); err != nil {
-		t.Fatalf("refund override should satisfy the Overmost ordering condition: %v", err)
+		t.Fatalf("refund override should satisfy the event ordering condition: %v", err)
 	}
 	got, found, err := table.GetWithOptions(ctx, state.ID, ReadOptions{ConsistentRead: true})
 	if err != nil || !found || got.LastEventAt != "2026-10-13T00:00:00Z" || !got.RevokedByRefund {

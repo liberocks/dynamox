@@ -5,8 +5,8 @@ package transaction
 import (
 	"context"
 
-	"github.com/liberocks/dynamox/examples/overmost/admin"
-	"github.com/liberocks/dynamox/examples/overmost/learner"
+	"github.com/liberocks/dynamox/examples/transaction/admin"
+	"github.com/liberocks/dynamox/examples/transaction/learner"
 	"github.com/liberocks/dynamox/runtime"
 )
 

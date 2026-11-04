@@ -211,7 +211,7 @@ moto_server -H 127.0.0.1 -p 8000
 In another terminal, run:
 
 ```sh
-DYNAMODB_ENDPOINT=http://127.0.0.1:8000 go test -run '^$' -bench '^BenchmarkDynamox' -benchmem ./runtime ./examples/blog/dynamoxgen ./examples/overmost/transaction
+DYNAMODB_ENDPOINT=http://127.0.0.1:8000 go test -run '^$' -bench '^BenchmarkDynamox' -benchmem ./runtime ./examples/blog/dynamoxgen ./examples/transaction
 ```
 
 ## Generated client
@@ -262,4 +262,4 @@ Conditions use DynamoDB expression syntax and `runtime.Expression` placeholders.
 
 `TransactGet` and `TransactWrite` accept operations from any generated package sharing the same DynamoDB connection, so separate admin and learner schemas can participate in one atomic transaction. `Create<Model>Operation` retains create-if-absent behavior; `Write<Model>` performs a full-item replacement. AWS transaction cancellation errors remain available through `errors.As`.
 
-`examples/overmost` contains separate admin and learner packages and a publishing transaction that conditionally updates an admin draft while creating learner content. Models sharing `@@table` can contribute distinct indexes. Conflicting keys, capacity, TTL, or same-name index declarations fail validation. `dynamox sync` merges and provisions each physical table once. Applications using Terraform or CloudFormation can use table-name overrides without provisioning permissions.
+`examples/transaction` contains separate admin and learner schemas and a publishing transaction that conditionally updates a draft while creating content. Models sharing `@@table` can contribute distinct indexes. Conflicting keys, capacity, TTL, or same-name index declarations fail validation. `dynamox sync` merges and provisions each physical table once. Applications using Terraform or CloudFormation can use table-name overrides without provisioning permissions.

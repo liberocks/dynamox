@@ -3,6 +3,12 @@
 .github/**
 node_modules/**
 scripts/**
+src/**
 tests/**
+tsconfig*.json
+package-lock.json
+coverage/**
+out/scripts/**
+out/**/*.map
 *.vsix
 npm-debug.log
