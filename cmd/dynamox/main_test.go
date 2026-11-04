@@ -13,6 +13,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/liberocks/dynamox/provision"
+	"github.com/liberocks/dynamox/runtime"
 	"github.com/liberocks/dynamox/schema"
 )
 
@@ -342,5 +343,19 @@ func TestProvisionTablesAndScalarMapping(t *testing.T) {
 		if got := scalar(tc.field); string(got) != tc.want {
 			t.Fatalf("scalar %v = %v", tc.field, got)
 		}
+	}
+}
+
+func TestSerialSchemaProvisionsSharedSequenceTable(t *testing.T) {
+	s, err := schema.Parse(`model Item { id Int @id @default(serial) value String @@table(name: "items") }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ds := schema.Validate(s); len(ds) != 0 {
+		t.Fatalf("schema diagnostics: %v", ds)
+	}
+	tables := provisionTables(s)
+	if len(tables) != 2 || tables[1].Name != runtime.SequenceTableName || tables[1].Partition.Name != "name" || tables[1].Partition.Type != "S" {
+		t.Fatalf("sequence provisioning: %#v", tables)
 	}
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/liberocks/dynamox/codegen"
 	"github.com/liberocks/dynamox/provision"
+	"github.com/liberocks/dynamox/runtime"
 	"github.com/liberocks/dynamox/schema"
 )
 
@@ -219,8 +220,12 @@ func runSyncWith(args []string, loadConfig func(context.Context, string, string)
 }
 func provisionTables(s *schema.Schema) []provision.Table {
 	r := make([]provision.Table, 0, len(s.Models))
+	needsSequences := false
 	for _, m := range s.Models {
 		t := provision.Table{Name: m.Table, Partition: provision.Key{Name: m.Partition, Type: scalar(m.Field(m.Partition)), Kind: "HASH"}}
+		if key := m.Field(m.Partition); key != nil && key.Default == "serial" {
+			needsSequences = true
+		}
 		if m.Sort != "" {
 			t.Sort = provision.Key{Name: m.Sort, Type: scalar(m.Field(m.Sort)), Kind: "RANGE"}
 		}
@@ -236,6 +241,9 @@ func provisionTables(s *schema.Schema) []provision.Table {
 			t.Indexes = append(t.Indexes, ix)
 		}
 		r = append(r, t)
+	}
+	if needsSequences {
+		r = append(r, provision.Table{Name: runtime.SequenceTableName, Partition: provision.Key{Name: "name", Type: types.ScalarAttributeTypeS, Kind: "HASH"}})
 	}
 	return r
 }
