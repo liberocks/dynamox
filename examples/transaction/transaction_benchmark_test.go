@@ -54,28 +54,28 @@ func BenchmarkDynamoxCrossClientConditionalTransaction(b *testing.B) {
 	})
 	sourceClient := source.NewClientWithOptions(db, runtime.ClientOptions{TableNames: map[string]string{"source-records": sourceTable}})
 	targetClient := target.NewClientWithOptions(db, runtime.ClientOptions{TableNames: map[string]string{"target-records": targetTable}})
-	pendingKey := source.SourceRecordKey{PK: "ENTITY#benchmark", SK: "SOURCE#record"}
+	sourceKey := source.SourceRecordKey{PK: "ENTITY#benchmark", SK: "SOURCE#record"}
 	pending := "pending"
-	if _, err := sourceClient.CreateSourceRecord(ctx, source.SourceRecord{PK: pendingKey.PK, SK: pendingKey.SK, Status: pending}); err != nil {
+	if _, err := sourceClient.CreateSourceRecord(ctx, source.SourceRecord{PK: sourceKey.PK, SK: sourceKey.SK, Status: pending, UpdatedAt: time.Now().UTC()}); err != nil {
 		b.Fatal(err)
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		if i > 0 {
 			b.StopTimer()
-			if err := sourceClient.UpdateSourceRecord(ctx, pendingKey, source.SourceRecordUpdate{SetStatus: &pending}); err != nil {
+			if err := sourceClient.UpdateSourceRecord(ctx, sourceKey, source.SourceRecordUpdate{SetStatus: &pending}); err != nil {
 				b.Fatal(err)
 			}
 			b.StartTimer()
 		}
 		record := target.TargetRecord{
-			PK:              pendingKey.PK,
-			SK:              fmt.Sprintf("TARGET#%d", i),
-			Status:          "processed",
-			Details:        []target.Detail{},
-			ProviderPayload: runtime.JSON(map[string]any{"source": "benchmark"}),
+			PK:      sourceKey.PK,
+			SK:      fmt.Sprintf("TARGET#%d", i),
+			Status:  "processed",
+			Details: []target.Detail{},
+			Payload: runtime.JSON(map[string]any{"source": "benchmark"}),
 		}
-		if err := CommitRecords(ctx, sourceClient, targetClient, pendingKey, record); err != nil {
+		if err := CommitRecords(ctx, sourceClient, targetClient, sourceKey, record); err != nil {
 			b.Fatal(err)
 		}
 	}

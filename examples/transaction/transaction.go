@@ -1,5 +1,5 @@
-// Package transaction shows a conditional conditional transaction assembled from
-// independently generated source and target clients.
+// Package transaction demonstrates a conditional write assembled from
+// operations created by two independently generated clients.
 package transaction
 
 import (
@@ -10,10 +10,10 @@ import (
 	"github.com/liberocks/dynamox/runtime"
 )
 
-func CommitRecords(ctx context.Context, sourceClient *source.Client, targetClient *target.Client, pendingKey source.SourceRecordKey, record target.TargetRecord) error {
+func CommitRecords(ctx context.Context, sourceClient *source.Client, targetClient *target.Client, sourceKey source.SourceRecordKey, targetRecord target.TargetRecord) error {
 	processed := "processed"
-	pendingUpdate, err := sourceClient.UpdateSourceRecordOperationWithOptions(
-		pendingKey,
+	sourceUpdate, err := sourceClient.UpdateSourceRecordOperationWithOptions(
+		sourceKey,
 		source.SourceRecordUpdate{SetStatus: &processed},
 		runtime.WriteOptions{Condition: &runtime.Expression{
 			Text:   "#status = :pending",
@@ -24,9 +24,9 @@ func CommitRecords(ctx context.Context, sourceClient *source.Client, targetClien
 	if err != nil {
 		return err
 	}
-	recordCreate, err := targetClient.CreateTargetRecordOperation(record)
+	targetCreate, err := targetClient.CreateTargetRecordOperation(targetRecord)
 	if err != nil {
 		return err
 	}
-	return sourceClient.TransactWrite(ctx, pendingUpdate, recordCreate)
+	return sourceClient.TransactWrite(ctx, sourceUpdate, targetCreate)
 }

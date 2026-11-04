@@ -10,9 +10,8 @@ import (
 )
 
 type Detail struct {
-	ID      string   `json:"id" dynamodbav:"id"`
-	Prompt  string   `json:"prompt" dynamodbav:"prompt"`
-	RecordValues []string `json:"values" dynamodbav:"values"`
+	Name   string   `json:"name" dynamodbav:"name"`
+	Values []string `json:"values" dynamodbav:"values"`
 }
 
 func (v Detail) MarshalDynamoDBAttributeValue() (types.AttributeValue, error) {
@@ -45,11 +44,11 @@ func (v *Detail) UnmarshalDynamoDBAttributeValue(value types.AttributeValue) err
 }
 
 type TargetRecord struct {
-	PK              string       `json:"PK" dynamodbav:"PK"`
-	SK              string       `json:"SK" dynamodbav:"SK"`
-	Status          string       `json:"status" dynamodbav:"status"`
-	Details        []Detail    `json:"details" dynamodbav:"details"`
-	ProviderPayload runtime.JSON `json:"providerPayload" dynamodbav:"providerPayload"`
+	PK      string       `json:"PK" dynamodbav:"PK"`
+	SK      string       `json:"SK" dynamodbav:"SK"`
+	Status  string       `json:"status" dynamodbav:"status"`
+	Details []Detail     `json:"details" dynamodbav:"details"`
+	Payload runtime.JSON `json:"payload" dynamodbav:"payload"`
 }
 
 type TargetRecordKey struct {
@@ -58,9 +57,9 @@ type TargetRecordKey struct {
 }
 
 type TargetRecordUpdate struct {
-	SetStatus          *string
-	SetDetails        *[]Detail
-	SetProviderPayload *runtime.JSON
+	SetStatus  *string
+	SetDetails *[]Detail
+	SetPayload *runtime.JSON
 }
 
 func keyTargetRecord(k TargetRecordKey) (map[string]types.AttributeValue, error) {
@@ -84,18 +83,18 @@ func keyTargetRecord(k TargetRecordKey) (map[string]types.AttributeValue, error)
 
 func encodeTargetRecord(v TargetRecord) (map[string]types.AttributeValue, error) {
 	plain := v
-	var zeroProviderPayload runtime.JSON
-	plain.ProviderPayload = zeroProviderPayload
+	var zeroPayload runtime.JSON
+	plain.Payload = zeroPayload
 	item, err := attributevalue.MarshalMap(plain)
 	if err != nil {
 		return nil, fmt.Errorf("dynamox: encode TargetRecord: %w", err)
 	}
 	{
-		av, err := runtime.MarshalJSON(v.ProviderPayload)
+		av, err := runtime.MarshalJSON(v.Payload)
 		if err != nil {
-			return nil, fmt.Errorf("dynamox: encode TargetRecord.providerPayload: %w", err)
+			return nil, fmt.Errorf("dynamox: encode TargetRecord.payload: %w", err)
 		}
-		item["providerPayload"] = av
+		item["payload"] = av
 	}
 	return item, nil
 }
@@ -105,17 +104,17 @@ func decodeTargetRecord(item map[string]types.AttributeValue) (TargetRecord, err
 	for k, v := range item {
 		plain[k] = v
 	}
-	delete(plain, "providerPayload")
+	delete(plain, "payload")
 	var out TargetRecord
 	if err := attributevalue.UnmarshalMap(plain, &out); err != nil {
 		return out, fmt.Errorf("dynamox: decode TargetRecord: %w", err)
 	}
-	if av, ok := item["providerPayload"]; ok {
+	if av, ok := item["payload"]; ok {
 		var value runtime.JSON
 		if err := runtime.UnmarshalJSON(av, &value); err != nil {
-			return out, fmt.Errorf("dynamox: decode TargetRecord.providerPayload: %w", err)
+			return out, fmt.Errorf("dynamox: decode TargetRecord.payload: %w", err)
 		}
-		out.ProviderPayload = value
+		out.Payload = value
 	}
 	return out, nil
 }
@@ -137,12 +136,12 @@ func encodeTargetRecordUpdate(p TargetRecordUpdate) (map[string]types.AttributeV
 		}
 		set["details"] = av
 	}
-	if p.SetProviderPayload != nil {
-		av, err := runtime.MarshalJSON(*p.SetProviderPayload)
+	if p.SetPayload != nil {
+		av, err := runtime.MarshalJSON(*p.SetPayload)
 		if err != nil {
-			return nil, nil, fmt.Errorf("dynamox: encode TargetRecord.providerPayload: %w", err)
+			return nil, nil, fmt.Errorf("dynamox: encode TargetRecord.payload: %w", err)
 		}
-		set["providerPayload"] = av
+		set["payload"] = av
 	}
 	return set, remove, nil
 }
@@ -150,7 +149,7 @@ func encodeTargetRecordUpdate(p TargetRecordUpdate) (map[string]types.AttributeV
 type Client struct {
 	idGenerator   runtime.IDGenerator
 	sequenceTable string
-	record       runtime.Table[TargetRecord, TargetRecordKey]
+	targetRecord  runtime.Table[TargetRecord, TargetRecordKey]
 }
 
 func NewClient(db runtime.DynamoAPI) *Client {
@@ -165,7 +164,7 @@ func NewClientWithOptions(db runtime.DynamoAPI, options runtime.ClientOptions) *
 		generateID = runtime.GenerateID
 	}
 	c := &Client{idGenerator: generateID, sequenceTable: options.TableName(runtime.SequenceTableName)}
-	c.record = runtime.Table[TargetRecord, TargetRecordKey]{DB: db, Name: options.TableName("target-records"), PartitionName: "PK", SortName: "SK", Codec: runtime.Codec[TargetRecord]{Encode: encodeTargetRecord, Decode: decodeTargetRecord}, Key: keyTargetRecord}
+	c.targetRecord = runtime.Table[TargetRecord, TargetRecordKey]{DB: db, Name: options.TableName("target-records"), PartitionName: "PK", SortName: "SK", Codec: runtime.Codec[TargetRecord]{Encode: encodeTargetRecord, Decode: decodeTargetRecord}, Key: keyTargetRecord}
 	return c
 }
 
@@ -176,38 +175,38 @@ func (c *Client) TransactWrite(ctx context.Context, items ...runtime.WriteItem) 
 	return runtime.TransactWrite(ctx, c.db(), items...)
 }
 func (c *Client) db() runtime.DynamoAPI {
-	return c.record.DB
+	return c.targetRecord.DB
 }
 
 func (c *Client) CreateTargetRecord(ctx context.Context, v TargetRecord) (TargetRecord, error) {
 	return c.CreateTargetRecordWithOptions(ctx, v, runtime.WriteOptions{})
 }
 func (c *Client) CreateTargetRecordWithOptions(ctx context.Context, v TargetRecord, options runtime.WriteOptions) (TargetRecord, error) {
-	if err := c.record.CreateWithOptions(ctx, v, options); err != nil {
+	if err := c.targetRecord.CreateWithOptions(ctx, v, options); err != nil {
 		return TargetRecord{}, err
 	}
 	return v, nil
 }
 func (c *Client) PutTargetRecord(ctx context.Context, v TargetRecord, options ...runtime.WriteOptions) error {
-	return c.record.Put(ctx, v, options...)
+	return c.targetRecord.Put(ctx, v, options...)
 }
 func (c *Client) GetTargetRecord(ctx context.Context, k TargetRecordKey) (TargetRecord, bool, error) {
-	return c.record.Get(ctx, k)
+	return c.targetRecord.Get(ctx, k)
 }
 func (c *Client) GetTargetRecordWithOptions(ctx context.Context, k TargetRecordKey, options runtime.ReadOptions) (TargetRecord, bool, error) {
-	return c.record.GetWithOptions(ctx, k, options)
+	return c.targetRecord.GetWithOptions(ctx, k, options)
 }
 func (c *Client) DeleteTargetRecord(ctx context.Context, k TargetRecordKey) error {
-	return c.record.Delete(ctx, k)
+	return c.targetRecord.Delete(ctx, k)
 }
 func (c *Client) DeleteTargetRecordWithOptions(ctx context.Context, k TargetRecordKey, options runtime.WriteOptions) error {
-	return c.record.DeleteWithOptions(ctx, k, options)
+	return c.targetRecord.DeleteWithOptions(ctx, k, options)
 }
 func (c *Client) ScanTargetRecord(ctx context.Context, p runtime.PageRequest) (runtime.Page[TargetRecord], error) {
-	return c.record.Scan(ctx, p)
+	return c.targetRecord.Scan(ctx, p)
 }
 func (c *Client) ScanTargetRecordWithOptions(ctx context.Context, o runtime.ScanOptions) (runtime.Page[TargetRecord], error) {
-	return c.record.ScanWithOptions(ctx, o)
+	return c.targetRecord.ScanWithOptions(ctx, o)
 }
 func (c *Client) UpdateTargetRecord(ctx context.Context, k TargetRecordKey, p TargetRecordUpdate) error {
 	return c.UpdateTargetRecordWithOptions(ctx, k, p, runtime.WriteOptions{})
@@ -217,7 +216,7 @@ func (c *Client) UpdateTargetRecordWithOptions(ctx context.Context, k TargetReco
 	if err != nil {
 		return err
 	}
-	return c.record.UpdateWithOptions(ctx, k, set, remove, options, "PK", "SK")
+	return c.targetRecord.UpdateWithOptions(ctx, k, set, remove, options, "PK", "SK")
 }
 func (c *Client) UpdateTargetRecordReturning(ctx context.Context, k TargetRecordKey, p TargetRecordUpdate, options ...runtime.WriteOptions) (TargetRecord, error) {
 	var o runtime.WriteOptions
@@ -228,27 +227,29 @@ func (c *Client) UpdateTargetRecordReturning(ctx context.Context, k TargetRecord
 	if err != nil {
 		return TargetRecord{}, err
 	}
-	return c.record.UpdateReturning(ctx, k, set, remove, o, "PK", "SK")
+	return c.targetRecord.UpdateReturning(ctx, k, set, remove, o, "PK", "SK")
 }
 func (c *Client) ReadTargetRecord(k TargetRecordKey, dst *TargetRecord) (runtime.ReadItem, error) {
-	return runtime.Read(c.record, k, dst)
+	return runtime.Read(c.targetRecord, k, dst)
 }
-func (c *Client) WriteTargetRecord(v TargetRecord) (runtime.WriteItem, error) { return c.record.PutOperation(v) }
+func (c *Client) WriteTargetRecord(v TargetRecord) (runtime.WriteItem, error) {
+	return c.targetRecord.PutOperation(v)
+}
 func (c *Client) WriteTargetRecordWithOptions(v TargetRecord, options runtime.WriteOptions) (runtime.WriteItem, error) {
-	return c.record.PutOperationWithOptions(v, options)
+	return c.targetRecord.PutOperationWithOptions(v, options)
 }
 func (c *Client) CreateTargetRecordOperation(v TargetRecord, options ...runtime.WriteOptions) (runtime.WriteItem, error) {
 	var o runtime.WriteOptions
 	if len(options) > 0 {
 		o = options[0]
 	}
-	return c.record.CreateOperation(v, o)
+	return c.targetRecord.CreateOperation(v, o)
 }
 func (c *Client) DeleteTargetRecordOperation(k TargetRecordKey) (runtime.WriteItem, error) {
-	return c.record.DeleteOperation(k)
+	return c.targetRecord.DeleteOperation(k)
 }
 func (c *Client) DeleteTargetRecordOperationWithOptions(k TargetRecordKey, o runtime.WriteOptions) (runtime.WriteItem, error) {
-	return c.record.DeleteOperationWithOptions(k, o)
+	return c.targetRecord.DeleteOperationWithOptions(k, o)
 }
 func (c *Client) UpdateTargetRecordOperation(k TargetRecordKey, p TargetRecordUpdate) (runtime.WriteItem, error) {
 	return c.UpdateTargetRecordOperationWithOptions(k, p, runtime.WriteOptions{})
@@ -258,7 +259,7 @@ func (c *Client) UpdateTargetRecordOperationWithOptions(k TargetRecordKey, p Tar
 	if err != nil {
 		return runtime.WriteItem{}, err
 	}
-	return c.record.UpdateOperationWithOptions(k, set, remove, o, "PK", "SK")
+	return c.targetRecord.UpdateOperationWithOptions(k, set, remove, o, "PK", "SK")
 }
 
 type TargetRecordPrimarySort struct {
@@ -271,5 +272,5 @@ func (c *Client) QueryTargetRecordByPK(ctx context.Context, value string, sort *
 	if sort != nil {
 		q.Sort = &runtime.Condition{Operator: sort.Operator, Value: sort.Value}
 	}
-	return c.record.Query(ctx, q)
+	return c.targetRecord.Query(ctx, q)
 }

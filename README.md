@@ -57,20 +57,16 @@ model SequenceItem {
 Supported types are `String`, `Int`, `Float`, `Boolean`, `DateTime`, `Bytes`, and `Json`. Add `?` for optional fields and `[]` for lists. `DateTime` uses Go `time.Time` and is stored as RFC 3339 text. A named `type` field marked `@document` is stored as a native DynamoDB map or list; nested named types are stored natively as well. Nil optional typed documents and nested fields are absent. `Json` represents heterogeneous native DynamoDB values, including maps, lists, numbers, booleans, strings, and null. An optional `Json?` field uses a pointer: nil omits the field, while a pointer to a nil `runtime.JSON` stores DynamoDB NULL. Empty maps and lists remain empty collections. JSON numbers decode as `attributevalue.Number` to retain precision. Unsupported values, cycles, and non-finite numbers return encoding errors. Named `type` fields marked `@jsonString` continue to be encoded as JSON strings. Enums are generated as named Go string types.
 
 ```prisma
-type RecordValue {
-  label String
-  value String
-}
 type RecordDetail {
-  prompt String
-  values RecordValue[]
-  providerData Json
+  key String
+  values String[]
+  metadata Json?
 }
 model DocumentRecord {
   id String @id
   details RecordDetail[] @document
-  rawProviderPayload Json?
-  legacySettings RecordDetail @jsonString
+  payload Json?
+  legacyDetails RecordDetail @jsonString
   @@table(name: "document_records")
 }
 ```
@@ -260,6 +256,6 @@ Queries and scans take `runtime.PageRequest` (`Limit`, `Cursor`, direction, and 
 
 Conditions use DynamoDB expression syntax and `runtime.Expression` placeholders. Values are Go values and Dynamox encodes them. For example: `runtime.Expression{Text: "#status = :pending", Names: map[string]string{"#status": "status"}, Values: map[string]any{":pending": "pending"}}`. Pass the expression with `runtime.WriteOptions{Condition: ...}`. Update placeholders avoid names and values already used by the condition.
 
-`TransactGet` and `TransactWrite` accept operations from any generated package sharing the same DynamoDB connection, so independent source and target schemas can participate in one atomic transaction. `Create<Model>Operation` retains create-if-absent behavior; `Write<Model>` performs a full-item replacement. AWS transaction cancellation errors remain available through `errors.As`.
+`TransactGet` and `TransactWrite` accept operations from any generated package sharing the same DynamoDB connection, so separate source and target schemas can participate in one atomic transaction. `Create<Model>Operation` retains create-if-absent behavior; `Write<Model>` performs a full-item replacement. AWS transaction cancellation errors remain available through `errors.As`.
 
 `examples/transaction` contains independent source and target schemas and a conditional transaction that updates a source record and creates a target record atomically. Models sharing `@@table` can contribute distinct indexes. Conflicting keys, capacity, TTL, or same-name index declarations fail validation. `dynamox sync` merges and provisions each physical table once. Applications using Terraform or CloudFormation can use table-name overrides without provisioning permissions.

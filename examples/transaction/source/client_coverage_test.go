@@ -79,21 +79,21 @@ func TestGeneratedSourceClientCoverage(t *testing.T) {
 	client := NewClient(db)
 	_ = NewClientWithIDGenerator(db, nil)
 	client = NewClientWithOptions(db, runtime.ClientOptions{TableNames: map[string]string{"source-records": "source-override"}})
-	pending := SourceRecord{PK: "ENTITY#one", SK: "SOURCE#one", Status: "pending", UpdatedAt: time.Now().UTC()}
+	sourceRecord := SourceRecord{PK: "ENTITY#one", SK: "SOURCE#one", Status: "pending", UpdatedAt: time.Now().UTC()}
 	condition := runtime.WriteOptions{Condition: &runtime.Expression{Text: "#status = :status", Names: map[string]string{"#status": "status"}, Values: map[string]any{":status": "pending"}}}
-	if _, err := client.CreateSourceRecord(ctx, pending); err != nil {
+	if _, err := client.CreateSourceRecord(ctx, sourceRecord); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.CreateSourceRecordWithOptions(ctx, pending, condition); err != nil {
+	if _, err := client.CreateSourceRecordWithOptions(ctx, sourceRecord, condition); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.PutSourceRecord(ctx, pending); err != nil {
+	if err := client.PutSourceRecord(ctx, sourceRecord); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.PutSourceRecord(ctx, pending, condition); err != nil {
+	if err := client.PutSourceRecord(ctx, sourceRecord, condition); err != nil {
 		t.Fatal(err)
 	}
-	key := SourceRecordKey{PK: pending.PK, SK: pending.SK}
+	key := SourceRecordKey{PK: sourceRecord.PK, SK: sourceRecord.SK}
 	if _, found, err := client.GetSourceRecord(ctx, key); err != nil || !found {
 		t.Fatalf("GetSourceRecord found=%v err=%v", found, err)
 	}
@@ -132,19 +132,19 @@ func TestGeneratedSourceClientCoverage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	write, err := client.WriteSourceRecord(pending)
+	write, err := client.WriteSourceRecord(sourceRecord)
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeWithOptions, err := client.WriteSourceRecordWithOptions(pending, condition)
+	writeWithOptions, err := client.WriteSourceRecordWithOptions(sourceRecord, condition)
 	if err != nil {
 		t.Fatal(err)
 	}
-	create, err := client.CreateSourceRecordOperation(pending)
+	create, err := client.CreateSourceRecordOperation(sourceRecord)
 	if err != nil {
 		t.Fatal(err)
 	}
-	createWithOptions, err := client.CreateSourceRecordOperation(pending, condition)
+	createWithOptions, err := client.CreateSourceRecordOperation(sourceRecord, condition)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,10 +174,10 @@ func TestGeneratedSourceClientCoverage(t *testing.T) {
 		t.Fatal(err)
 	}
 	db.err = errors.New("offline")
-	if _, err := client.CreateSourceRecord(ctx, pending); err == nil {
+	if _, err := client.CreateSourceRecord(ctx, sourceRecord); err == nil {
 		t.Fatal("CreateSourceRecord should propagate errors")
 	}
-	if err := client.PutSourceRecord(ctx, pending); err == nil {
+	if err := client.PutSourceRecord(ctx, sourceRecord); err == nil {
 		t.Fatal("PutSourceRecord should propagate errors")
 	}
 	if _, _, err := client.GetSourceRecord(ctx, key); err == nil {

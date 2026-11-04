@@ -70,7 +70,7 @@ func TestOptionsConditionsPlaceholderMergingAndReturningUpdate(t *testing.T) {
 		t.Fatalf("upsert condition missing: %#v", db.put)
 	}
 	set := map[string]types.AttributeValue{"name": StringKey("new")}
-	collision := &Expression{Text: "attribute_exists(#dx_f0) AND #dx_f0 = :dx_v0", Names: map[string]string{"#dx_f0": "status"}, Values: map[string]any{":dx_v0": "pending"}}
+	collision := &Expression{Text: "attribute_exists(#dx_f0) AND #dx_f0 = :dx_v0", Names: map[string]string{"#dx_f0": "status"}, Values: map[string]any{":dx_v0": "stale"}}
 	got, err := table.UpdateReturning(ctx, "a", set, nil, WriteOptions{Condition: collision}, "id")
 	if err != nil {
 		t.Fatal(err)
@@ -132,7 +132,7 @@ func TestConditionalTransactionKeepsAWSFailureType(t *testing.T) {
 		t.Fatalf("transaction create was not conditional: %#v", put)
 	}
 	db.err = nil
-	deleteOperation, err := table.DeleteOperationWithOptions("old", WriteOptions{Condition: &Expression{Text: "#status = :status", Names: map[string]string{"#status": "status"}, Values: map[string]any{":status": "pending"}}})
+	deleteOperation, err := table.DeleteOperationWithOptions("old", WriteOptions{Condition: &Expression{Text: "#status = :status", Names: map[string]string{"#status": "status"}, Values: map[string]any{":status": "stale"}}})
 	if err != nil {
 		t.Fatal(err)
 	}

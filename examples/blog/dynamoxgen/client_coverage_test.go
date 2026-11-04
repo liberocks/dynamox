@@ -118,7 +118,7 @@ func setGeneratedRecord(t *testing.T, d *generatedDynamo, table, id string, item
 }
 func generatedUser(t *testing.T, id string) map[string]types.AttributeValue {
 	t.Helper()
-	item, err := encodeUser(User{ID: id, Name: "Ada", Preferences: Preferences{Theme: "dark", Digest: true}, Settings: Preferences{Theme: "light"}, OptionalPreferences: &Preferences{Theme: "pending"}})
+	item, err := encodeUser(User{ID: id, Name: "Ada", Preferences: Preferences{Theme: "dark", Digest: true}, Settings: Preferences{Theme: "light"}, OptionalPreferences: &Preferences{Theme: "saved"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -613,7 +613,7 @@ func TestGeneratedAdditiveOptionMethodsAndOperations(t *testing.T) {
 	d.scanItems["sequence_items"] = []map[string]types.AttributeValue{generatedSequenceItem(t, 7)}
 	setGeneratedRecord(t, d, "sequence_items", "7", generatedSequenceItem(t, 7))
 	d.queryItems["posts"] = []map[string]types.AttributeValue{p}
-	condition := runtime.WriteOptions{Condition: &runtime.Expression{Text: "#status = :status", Names: map[string]string{"#status": "status"}, Values: map[string]any{":status": "pending"}}}
+	condition := runtime.WriteOptions{Condition: &runtime.Expression{Text: "#status = :status", Names: map[string]string{"#status": "status"}, Values: map[string]any{":status": "saved"}}}
 
 	if err := client.PutUser(ctx, User{ID: "put-user"}); err != nil {
 		t.Fatal(err)

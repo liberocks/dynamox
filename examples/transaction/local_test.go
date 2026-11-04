@@ -58,33 +58,32 @@ func TestDynamoDBLocalCrossClientTransactionAndTableOverrides(t *testing.T) {
 
 	sourceClient := source.NewClientWithOptions(db, runtime.ClientOptions{TableNames: map[string]string{"source-records": sourceTable}})
 	targetClient := target.NewClientWithOptions(db, runtime.ClientOptions{TableNames: map[string]string{"target-records": targetTable}})
-	const pk = "ENTITY#ielts"
-	key := source.SourceRecordKey{PK: pk, SK: "SOURCE#record-1"}
-	pending, err := sourceClient.CreateSourceRecord(ctx, source.SourceRecord{PK: key.PK, SK: key.SK, Status: "pending"})
-	if err != nil || pending.Status != "pending" {
-		t.Fatalf("seed pending through overridden source client: pending=%#v err=%v", pending, err)
+	const pk = "ENTITY#one"
+	sourceKey := source.SourceRecordKey{PK: pk, SK: "SOURCE#one"}
+	seed := source.SourceRecord{PK: sourceKey.PK, SK: sourceKey.SK, Status: "pending", UpdatedAt: time.Now().UTC()}
+	if _, err := sourceClient.CreateSourceRecord(ctx, seed); err != nil {
+		t.Fatalf("seed source record through its table override: %v", err)
 	}
-	record := target.TargetRecord{PK: pk, SK: "TARGET#record-1", Status: "processed", Details: []target.Detail{}, ProviderPayload: runtime.JSON(map[string]any{"source": "integration"})}
-	if err := CommitRecords(ctx, sourceClient, targetClient, key, record); err != nil {
+	targetRecord := target.TargetRecord{PK: pk, SK: "TARGET#one", Status: "processed", Details: []target.Detail{}, Payload: runtime.JSON(map[string]any{"source": "integration"})}
+	if err := CommitRecords(ctx, sourceClient, targetClient, sourceKey, targetRecord); err != nil {
 		t.Fatal(err)
 	}
-	updated, found, err := sourceClient.GetSourceRecordWithOptions(ctx, key, runtime.ReadOptions{ConsistentRead: true})
+	updated, found, err := sourceClient.GetSourceRecordWithOptions(ctx, sourceKey, runtime.ReadOptions{ConsistentRead: true})
 	if err != nil || !found || updated.Status != "processed" {
-		t.Fatalf("pending update missing after transaction: pending=%#v found=%v err=%v", updated, found, err)
+		t.Fatalf("source update missing after transaction: record=%#v found=%v err=%v", updated, found, err)
 	}
-	created, found, err := targetClient.GetTargetRecordWithOptions(ctx, target.TargetRecordKey{PK: record.PK, SK: record.SK}, runtime.ReadOptions{ConsistentRead: true})
+	created, found, err := targetClient.GetTargetRecordWithOptions(ctx, target.TargetRecordKey{PK: targetRecord.PK, SK: targetRecord.SK}, runtime.ReadOptions{ConsistentRead: true})
 	if err != nil || !found || created.Status != "processed" {
-		t.Fatalf("record creation missing after transaction: record=%#v found=%v err=%v", created, found, err)
+		t.Fatalf("target record missing after transaction: record=%#v found=%v err=%v", created, found, err)
 	}
 
-	// A blocked source record must cancel the complete transaction, leaving both
-	// the pending and record rows unchanged.
-	staleKey := source.SourceRecordKey{PK: pk, SK: "SOURCE#record-2"}
-	if _, err := sourceClient.CreateSourceRecord(ctx, source.SourceRecord{PK: staleKey.PK, SK: staleKey.SK, Status: "archived"}); err != nil {
+	// A source record outside the expected state must cancel both writes.
+	blockedKey := source.SourceRecordKey{PK: pk, SK: "SOURCE#blocked"}
+	if _, err := sourceClient.CreateSourceRecord(ctx, source.SourceRecord{PK: blockedKey.PK, SK: blockedKey.SK, Status: "blocked"}); err != nil {
 		t.Fatal(err)
 	}
-	record.SK = "TARGET#record-2"
-	err = CommitRecords(ctx, sourceClient, targetClient, staleKey, record)
+	targetRecord.SK = "TARGET#blocked"
+	err = CommitRecords(ctx, sourceClient, targetClient, blockedKey, targetRecord)
 	var cancelled *types.TransactionCanceledException
 	conditionalFailure := false
 	if errors.As(err, &cancelled) {
@@ -95,12 +94,12 @@ func TestDynamoDBLocalCrossClientTransactionAndTableOverrides(t *testing.T) {
 	if !conditionalFailure {
 		t.Fatalf("expected conditional transaction cancellation, got %v", err)
 	}
-	unchanged, found, err := sourceClient.GetSourceRecordWithOptions(ctx, staleKey, runtime.ReadOptions{ConsistentRead: true})
-	if err != nil || !found || unchanged.Status != "archived" {
-		t.Fatalf("failed cross-client transaction changed its pending: pending=%#v found=%v err=%v", unchanged, found, err)
+	unchanged, found, err := sourceClient.GetSourceRecordWithOptions(ctx, blockedKey, runtime.ReadOptions{ConsistentRead: true})
+	if err != nil || !found || unchanged.Status != "blocked" {
+		t.Fatalf("failed transaction changed its source record: record=%#v found=%v err=%v", unchanged, found, err)
 	}
-	_, found, err = targetClient.GetTargetRecordWithOptions(ctx, target.TargetRecordKey{PK: record.PK, SK: record.SK}, runtime.ReadOptions{ConsistentRead: true})
+	_, found, err = targetClient.GetTargetRecordWithOptions(ctx, target.TargetRecordKey{PK: targetRecord.PK, SK: targetRecord.SK}, runtime.ReadOptions{ConsistentRead: true})
 	if err != nil || found {
-		t.Fatalf("failed cross-client transaction created its record item: found=%v err=%v", found, err)
+		t.Fatalf("failed transaction created a target record: found=%v err=%v", found, err)
 	}
 }

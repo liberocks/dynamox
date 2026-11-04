@@ -70,8 +70,8 @@ func (d *coverageDynamo) TransactWriteItems(_ context.Context, _ *dynamodb.Trans
 
 func TestGeneratedTargetClientCoverage(t *testing.T) {
 	ctx := context.Background()
-	record := TargetRecord{PK: "ENTITY#one", SK: "TARGET#one", Status: "processed", Details: []Detail{{ID: "one", Prompt: "Prompt", RecordValues: []string{"A", "B"}}}, ProviderPayload: runtime.JSON(map[string]any{"source": "test"})}
-	item, err := encodeTargetRecord(record)
+	targetRecord := TargetRecord{PK: "ENTITY#one", SK: "TARGET#one", Status: "processed", Details: []Detail{{Name: "detail one", Values: []string{"A", "B"}}}, Payload: runtime.JSON(map[string]any{"origin": "test"})}
+	item, err := encodeTargetRecord(targetRecord)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,18 +79,18 @@ func TestGeneratedTargetClientCoverage(t *testing.T) {
 	client := NewClient(db)
 	_ = NewClientWithIDGenerator(db, nil)
 	client = NewClientWithOptions(db, runtime.ClientOptions{TableNames: map[string]string{"target-records": "target-override"}})
-	key := TargetRecordKey{PK: record.PK, SK: record.SK}
+	key := TargetRecordKey{PK: targetRecord.PK, SK: targetRecord.SK}
 	condition := runtime.WriteOptions{Condition: &runtime.Expression{Text: "#status = :status", Names: map[string]string{"#status": "status"}, Values: map[string]any{":status": "processed"}}}
-	if _, err := client.CreateTargetRecord(ctx, record); err != nil {
+	if _, err := client.CreateTargetRecord(ctx, targetRecord); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.CreateTargetRecordWithOptions(ctx, record, condition); err != nil {
+	if _, err := client.CreateTargetRecordWithOptions(ctx, targetRecord, condition); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.PutTargetRecord(ctx, record); err != nil {
+	if err := client.PutTargetRecord(ctx, targetRecord); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.PutTargetRecord(ctx, record, condition); err != nil {
+	if err := client.PutTargetRecord(ctx, targetRecord, condition); err != nil {
 		t.Fatal(err)
 	}
 	if _, found, err := client.GetTargetRecord(ctx, key); err != nil || !found {
@@ -115,9 +115,9 @@ func TestGeneratedTargetClientCoverage(t *testing.T) {
 		t.Fatalf("ScanTargetRecordWithOptions page=%#v err=%v", page, err)
 	}
 	status := "archived"
-	details := []Detail{{ID: "two", Prompt: "Next", RecordValues: []string{"C"}}}
-	payload := runtime.JSON(map[string]any{"source": "update"})
-	patch := TargetRecordUpdate{SetStatus: &status, SetDetails: &details, SetProviderPayload: &payload}
+	details := []Detail{{Name: "detail two", Values: []string{"C"}}}
+	payload := runtime.JSON(map[string]any{"origin": "update"})
+	patch := TargetRecordUpdate{SetStatus: &status, SetDetails: &details, SetPayload: &payload}
 	if err := client.UpdateTargetRecord(ctx, key, patch); err != nil {
 		t.Fatal(err)
 	}
@@ -132,19 +132,19 @@ func TestGeneratedTargetClientCoverage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	write, err := client.WriteTargetRecord(record)
+	write, err := client.WriteTargetRecord(targetRecord)
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeWithOptions, err := client.WriteTargetRecordWithOptions(record, condition)
+	writeWithOptions, err := client.WriteTargetRecordWithOptions(targetRecord, condition)
 	if err != nil {
 		t.Fatal(err)
 	}
-	create, err := client.CreateTargetRecordOperation(record)
+	create, err := client.CreateTargetRecordOperation(targetRecord)
 	if err != nil {
 		t.Fatal(err)
 	}
-	createWithOptions, err := client.CreateTargetRecordOperation(record, condition)
+	createWithOptions, err := client.CreateTargetRecordOperation(targetRecord, condition)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,15 +174,15 @@ func TestGeneratedTargetClientCoverage(t *testing.T) {
 		t.Fatal(err)
 	}
 	bad := runtime.JSON(make(chan int))
-	badTargetRecord := record
-	badTargetRecord.ProviderPayload = bad
+	badTargetRecord := targetRecord
+	badTargetRecord.Payload = bad
 	if _, err := client.CreateTargetRecord(ctx, badTargetRecord); err == nil {
 		t.Fatal("CreateTargetRecord should return JSON encoding error")
 	}
 	if err := client.PutTargetRecord(ctx, badTargetRecord); err == nil {
 		t.Fatal("PutTargetRecord should return JSON encoding error")
 	}
-	badPatch := TargetRecordUpdate{SetProviderPayload: &bad}
+	badPatch := TargetRecordUpdate{SetPayload: &bad}
 	if err := client.UpdateTargetRecord(ctx, key, badPatch); err == nil {
 		t.Fatal("UpdateTargetRecord should return JSON encoding error")
 	}
@@ -193,10 +193,10 @@ func TestGeneratedTargetClientCoverage(t *testing.T) {
 		t.Fatal("UpdateTargetRecordOperation should return JSON encoding error")
 	}
 	db.err = errors.New("offline")
-	if _, err := client.CreateTargetRecord(ctx, record); err == nil {
+	if _, err := client.CreateTargetRecord(ctx, targetRecord); err == nil {
 		t.Fatal("CreateTargetRecord should propagate errors")
 	}
-	if err := client.PutTargetRecord(ctx, record); err == nil {
+	if err := client.PutTargetRecord(ctx, targetRecord); err == nil {
 		t.Fatal("PutTargetRecord should propagate errors")
 	}
 	if _, _, err := client.GetTargetRecord(ctx, key); err == nil {
@@ -221,7 +221,7 @@ func TestGeneratedTargetClientCoverage(t *testing.T) {
 		t.Fatal("TransactWrite should propagate errors")
 	}
 	db.err = nil
-	db.item = map[string]types.AttributeValue{"PK": &types.AttributeValueMemberS{Value: "x"}, "SK": &types.AttributeValueMemberS{Value: "y"}, "providerPayload": &types.AttributeValueMemberM{Value: map[string]types.AttributeValue{"nested": nil}}}
+	db.item = map[string]types.AttributeValue{"PK": &types.AttributeValueMemberS{Value: "x"}, "SK": &types.AttributeValueMemberS{Value: "y"}, "payload": &types.AttributeValueMemberM{Value: map[string]types.AttributeValue{"nested": nil}}}
 	if _, _, err := client.GetTargetRecord(ctx, TargetRecordKey{PK: "x", SK: "y"}); err == nil {
 		t.Fatal("malformed Json should be rejected")
 	}

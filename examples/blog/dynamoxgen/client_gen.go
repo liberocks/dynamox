@@ -158,7 +158,7 @@ type User struct {
 	OptionalPayload             *runtime.JSON     `json:"optionalPayload,omitempty" dynamodbav:"optionalPayload,omitempty"`
 	Payloads                    []runtime.JSON    `json:"payloads" dynamodbav:"payloads"`
 	Settings                    Preferences       `json:"settings" dynamodbav:"settings"`
-	OptionalPreferences            *Preferences      `json:"optionalPreferences,omitempty" dynamodbav:"optionalPreferences,omitempty"`
+	OptionalPreferences         *Preferences      `json:"optionalPreferences,omitempty" dynamodbav:"optionalPreferences,omitempty"`
 	Nickname                    *string           `json:"nickname,omitempty" dynamodbav:"nickname,omitempty"`
 }
 
@@ -177,8 +177,8 @@ type UserUpdate struct {
 	ClearOptionalPayload             bool
 	SetPayloads                      *[]runtime.JSON
 	SetSettings                      *Preferences
-	SetOptionalPreferences              *Preferences
-	ClearOptionalPreferences            bool
+	SetOptionalPreferences           *Preferences
+	ClearOptionalPreferences         bool
 	SetNickname                      *string
 	ClearNickname                    bool
 }

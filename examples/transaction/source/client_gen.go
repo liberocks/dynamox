@@ -107,7 +107,7 @@ func encodeSourceRecordUpdate(p SourceRecordUpdate) (map[string]types.AttributeV
 type Client struct {
 	idGenerator   runtime.IDGenerator
 	sequenceTable string
-	pending         runtime.Table[SourceRecord, SourceRecordKey]
+	sourceRecord  runtime.Table[SourceRecord, SourceRecordKey]
 }
 
 func NewClient(db runtime.DynamoAPI) *Client {
@@ -122,7 +122,7 @@ func NewClientWithOptions(db runtime.DynamoAPI, options runtime.ClientOptions) *
 		generateID = runtime.GenerateID
 	}
 	c := &Client{idGenerator: generateID, sequenceTable: options.TableName(runtime.SequenceTableName)}
-	c.pending = runtime.Table[SourceRecord, SourceRecordKey]{DB: db, Name: options.TableName("source-records"), PartitionName: "PK", SortName: "SK", Codec: runtime.Codec[SourceRecord]{Encode: encodeSourceRecord, Decode: decodeSourceRecord}, Key: keySourceRecord}
+	c.sourceRecord = runtime.Table[SourceRecord, SourceRecordKey]{DB: db, Name: options.TableName("source-records"), PartitionName: "PK", SortName: "SK", Codec: runtime.Codec[SourceRecord]{Encode: encodeSourceRecord, Decode: decodeSourceRecord}, Key: keySourceRecord}
 	return c
 }
 
@@ -133,36 +133,38 @@ func (c *Client) TransactWrite(ctx context.Context, items ...runtime.WriteItem) 
 	return runtime.TransactWrite(ctx, c.db(), items...)
 }
 func (c *Client) db() runtime.DynamoAPI {
-	return c.pending.DB
+	return c.sourceRecord.DB
 }
 
 func (c *Client) CreateSourceRecord(ctx context.Context, v SourceRecord) (SourceRecord, error) {
 	return c.CreateSourceRecordWithOptions(ctx, v, runtime.WriteOptions{})
 }
 func (c *Client) CreateSourceRecordWithOptions(ctx context.Context, v SourceRecord, options runtime.WriteOptions) (SourceRecord, error) {
-	if err := c.pending.CreateWithOptions(ctx, v, options); err != nil {
+	if err := c.sourceRecord.CreateWithOptions(ctx, v, options); err != nil {
 		return SourceRecord{}, err
 	}
 	return v, nil
 }
 func (c *Client) PutSourceRecord(ctx context.Context, v SourceRecord, options ...runtime.WriteOptions) error {
-	return c.pending.Put(ctx, v, options...)
+	return c.sourceRecord.Put(ctx, v, options...)
 }
 func (c *Client) GetSourceRecord(ctx context.Context, k SourceRecordKey) (SourceRecord, bool, error) {
-	return c.pending.Get(ctx, k)
+	return c.sourceRecord.Get(ctx, k)
 }
 func (c *Client) GetSourceRecordWithOptions(ctx context.Context, k SourceRecordKey, options runtime.ReadOptions) (SourceRecord, bool, error) {
-	return c.pending.GetWithOptions(ctx, k, options)
+	return c.sourceRecord.GetWithOptions(ctx, k, options)
 }
-func (c *Client) DeleteSourceRecord(ctx context.Context, k SourceRecordKey) error { return c.pending.Delete(ctx, k) }
+func (c *Client) DeleteSourceRecord(ctx context.Context, k SourceRecordKey) error {
+	return c.sourceRecord.Delete(ctx, k)
+}
 func (c *Client) DeleteSourceRecordWithOptions(ctx context.Context, k SourceRecordKey, options runtime.WriteOptions) error {
-	return c.pending.DeleteWithOptions(ctx, k, options)
+	return c.sourceRecord.DeleteWithOptions(ctx, k, options)
 }
 func (c *Client) ScanSourceRecord(ctx context.Context, p runtime.PageRequest) (runtime.Page[SourceRecord], error) {
-	return c.pending.Scan(ctx, p)
+	return c.sourceRecord.Scan(ctx, p)
 }
 func (c *Client) ScanSourceRecordWithOptions(ctx context.Context, o runtime.ScanOptions) (runtime.Page[SourceRecord], error) {
-	return c.pending.ScanWithOptions(ctx, o)
+	return c.sourceRecord.ScanWithOptions(ctx, o)
 }
 func (c *Client) UpdateSourceRecord(ctx context.Context, k SourceRecordKey, p SourceRecordUpdate) error {
 	return c.UpdateSourceRecordWithOptions(ctx, k, p, runtime.WriteOptions{})
@@ -172,7 +174,7 @@ func (c *Client) UpdateSourceRecordWithOptions(ctx context.Context, k SourceReco
 	if err != nil {
 		return err
 	}
-	return c.pending.UpdateWithOptions(ctx, k, set, remove, options, "PK", "SK")
+	return c.sourceRecord.UpdateWithOptions(ctx, k, set, remove, options, "PK", "SK")
 }
 func (c *Client) UpdateSourceRecordReturning(ctx context.Context, k SourceRecordKey, p SourceRecordUpdate, options ...runtime.WriteOptions) (SourceRecord, error) {
 	var o runtime.WriteOptions
@@ -183,27 +185,29 @@ func (c *Client) UpdateSourceRecordReturning(ctx context.Context, k SourceRecord
 	if err != nil {
 		return SourceRecord{}, err
 	}
-	return c.pending.UpdateReturning(ctx, k, set, remove, o, "PK", "SK")
+	return c.sourceRecord.UpdateReturning(ctx, k, set, remove, o, "PK", "SK")
 }
 func (c *Client) ReadSourceRecord(k SourceRecordKey, dst *SourceRecord) (runtime.ReadItem, error) {
-	return runtime.Read(c.pending, k, dst)
+	return runtime.Read(c.sourceRecord, k, dst)
 }
-func (c *Client) WriteSourceRecord(v SourceRecord) (runtime.WriteItem, error) { return c.pending.PutOperation(v) }
+func (c *Client) WriteSourceRecord(v SourceRecord) (runtime.WriteItem, error) {
+	return c.sourceRecord.PutOperation(v)
+}
 func (c *Client) WriteSourceRecordWithOptions(v SourceRecord, options runtime.WriteOptions) (runtime.WriteItem, error) {
-	return c.pending.PutOperationWithOptions(v, options)
+	return c.sourceRecord.PutOperationWithOptions(v, options)
 }
 func (c *Client) CreateSourceRecordOperation(v SourceRecord, options ...runtime.WriteOptions) (runtime.WriteItem, error) {
 	var o runtime.WriteOptions
 	if len(options) > 0 {
 		o = options[0]
 	}
-	return c.pending.CreateOperation(v, o)
+	return c.sourceRecord.CreateOperation(v, o)
 }
 func (c *Client) DeleteSourceRecordOperation(k SourceRecordKey) (runtime.WriteItem, error) {
-	return c.pending.DeleteOperation(k)
+	return c.sourceRecord.DeleteOperation(k)
 }
 func (c *Client) DeleteSourceRecordOperationWithOptions(k SourceRecordKey, o runtime.WriteOptions) (runtime.WriteItem, error) {
-	return c.pending.DeleteOperationWithOptions(k, o)
+	return c.sourceRecord.DeleteOperationWithOptions(k, o)
 }
 func (c *Client) UpdateSourceRecordOperation(k SourceRecordKey, p SourceRecordUpdate) (runtime.WriteItem, error) {
 	return c.UpdateSourceRecordOperationWithOptions(k, p, runtime.WriteOptions{})
@@ -213,7 +217,7 @@ func (c *Client) UpdateSourceRecordOperationWithOptions(k SourceRecordKey, p Sou
 	if err != nil {
 		return runtime.WriteItem{}, err
 	}
-	return c.pending.UpdateOperationWithOptions(k, set, remove, o, "PK", "SK")
+	return c.sourceRecord.UpdateOperationWithOptions(k, set, remove, o, "PK", "SK")
 }
 
 type SourceRecordPrimarySort struct {
@@ -226,5 +230,5 @@ func (c *Client) QuerySourceRecordByPK(ctx context.Context, value string, sort *
 	if sort != nil {
 		q.Sort = &runtime.Condition{Operator: sort.Operator, Value: sort.Value}
 	}
-	return c.pending.Query(ctx, q)
+	return c.sourceRecord.Query(ctx, q)
 }

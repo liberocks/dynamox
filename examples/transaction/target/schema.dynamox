@@ -1,6 +1,5 @@
 type Detail {
-  id String
-  prompt String
+  name String
   values String[]
 }
 
@@ -9,6 +8,6 @@ model TargetRecord {
   SK String @sortKey
   status String
   details Detail[] @document
-  providerPayload Json
+  payload Json
   @@table(name: "target-records")
 }

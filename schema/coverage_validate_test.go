@@ -205,10 +205,10 @@ model SerialTable { id Int @id @default(serial) @@table(name: "dynamox_sequences
 }
 
 func TestSharedTablesAndDocumentFields(t *testing.T) {
-	src := `type Detail { title String payload Json }
-model SourceSourceRecord { id String @id email String @@table(name: "shared") @@index(name: "ByEmail", partition: email) }
-model TargetItem { id String @id createdAt DateTime @@table(name: "shared") @@index(name: "ByCreated", partition: createdAt) }
-model DocumentRecord { id String @id details Detail[] @document snapshot Json oldSnapshot Detail @jsonString @@table(name: "document_records") }`
+	src := `type RecordDetail { title String payload Json }
+model SourceRecord { id String @id email String @@table(name: "shared") @@index(name: "ByEmail", partition: email) }
+model TargetRecord { id String @id createdAt DateTime @@table(name: "shared") @@index(name: "ByCreated", partition: createdAt) }
+model DocumentRecord { id String @id details RecordDetail[] @document snapshot Json oldSnapshot RecordDetail @jsonString @@table(name: "document_records") }`
 	s, err := Parse(src)
 	if err != nil {
 		t.Fatal(err)
