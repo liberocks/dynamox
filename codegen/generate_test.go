@@ -131,9 +131,27 @@ model Serial { id Int @id @default(serial) @@table(name: "serials") }`
 		t.Fatal(err)
 	}
 	text := string(generated)
-	for _, want := range []string{`c.idGenerator("uuidv1")`, `c.idGenerator("uuidv4")`, `c.idGenerator("uuidv7")`, `c.idGenerator("objectid")`, `runtime.NextSerial(ctx, c.db(), "serials")`, `func NewClientWithIDGenerator`} {
+	for _, want := range []string{`c.idGenerator("uuidv1")`, `c.idGenerator("uuidv4")`, `c.idGenerator("uuidv7")`, `c.idGenerator("objectid")`, `runtime.NextSerialWithTable(ctx, c.db(), c.sequenceTable, "serials")`, `func NewClientWithIDGenerator`} {
 		if !strings.Contains(text, want) {
 			t.Errorf("generated output missing %q", want)
+		}
+	}
+}
+
+func TestGenerateHandlesRequiredAndOptionalDocumentJSON(t *testing.T) {
+	s, err := schema.Parse(`type Child { value String }
+type Metadata { required Json optional Json? child Child? @document }
+model Record { id String @id document Metadata @document @@table(name: "records") }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated, err := Generate(s, "documents")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"var zeroRequired runtime.JSON", "runtime.MarshalJSON(v.Required)", "runtime.MarshalJSON(*v.Optional)", `dynamodbav:"child,omitempty"`} {
+		if !strings.Contains(string(generated), want) {
+			t.Errorf("generated document codec missing %q", want)
 		}
 	}
 }

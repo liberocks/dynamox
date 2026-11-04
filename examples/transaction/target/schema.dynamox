@@ -1,0 +1,14 @@
+type Detail {
+  id String
+  prompt String
+  values String[]
+}
+
+model TargetRecord {
+  PK String @partitionKey
+  SK String @sortKey
+  status String
+  details Detail[] @document
+  providerPayload Json
+  @@table(name: "target-records")
+}

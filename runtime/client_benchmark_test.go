@@ -99,6 +99,18 @@ func BenchmarkDynamoxRuntime(b *testing.B) {
 		}
 	})
 
+	b.Run("GetConsistentRead", func(b *testing.B) {
+		ctx, table := newBenchmarkTable(b)
+		options := dynamoxruntime.ReadOptions{ConsistentRead: true}
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			item, found, err := table.GetWithOptions(ctx, benchmarkKey{ID: "seed"}, options)
+			if err != nil || !found || item.Value != "initial" {
+				b.Fatalf("consistent Get result: found=%t item=%#v err=%v", found, item, err)
+			}
+		}
+	})
+
 	b.Run("Create", func(b *testing.B) {
 		ctx, table := newBenchmarkTable(b)
 		b.ResetTimer()
@@ -121,6 +133,50 @@ func BenchmarkDynamoxRuntime(b *testing.B) {
 		}
 	})
 
+	b.Run("UpdateConditional", func(b *testing.B) {
+		ctx, table := newBenchmarkTable(b)
+		condition := dynamoxruntime.WriteOptions{Condition: &dynamoxruntime.Expression{
+			Text:   "#value = :expected",
+			Names:  map[string]string{"#value": "value"},
+			Values: map[string]any{":expected": "initial"},
+		}}
+		set := map[string]types.AttributeValue{"value": &types.AttributeValueMemberS{Value: "initial"}}
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			if err := table.UpdateWithOptions(ctx, benchmarkKey{ID: "seed"}, set, nil, condition, "id"); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+
+	b.Run("UpdateReturningAllNew", func(b *testing.B) {
+		ctx, table := newBenchmarkTable(b)
+		set := map[string]types.AttributeValue{"value": &types.AttributeValueMemberS{Value: "returned"}}
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			item, err := table.UpdateReturning(ctx, benchmarkKey{ID: "seed"}, set, nil, dynamoxruntime.WriteOptions{}, "id")
+			if err != nil || item.Value != "returned" {
+				b.Fatalf("ALL_NEW update result: item=%#v err=%v", item, err)
+			}
+		}
+	})
+
+	b.Run("PutConditionalUpsert", func(b *testing.B) {
+		ctx, table := newBenchmarkTable(b)
+		item := benchmarkItem{ID: "seed", Tenant: "tenant-1", Value: "initial"}
+		options := dynamoxruntime.WriteOptions{Condition: &dynamoxruntime.Expression{
+			Text:   "#value = :expected",
+			Names:  map[string]string{"#value": "value"},
+			Values: map[string]any{":expected": "initial"},
+		}}
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			if err := table.Put(ctx, item, options); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+
 	b.Run("QueryIndex", func(b *testing.B) {
 		ctx, table := newBenchmarkTable(b)
 		b.ResetTimer()
@@ -136,6 +192,22 @@ func BenchmarkDynamoxRuntime(b *testing.B) {
 		}
 	})
 
+	b.Run("QueryConsistentRead", func(b *testing.B) {
+		ctx, table := newBenchmarkTable(b)
+		request := dynamoxruntime.QueryRequest{
+			PartitionName:  "id",
+			PartitionValue: "seed",
+			Page:           dynamoxruntime.PageRequest{ConsistentRead: true},
+		}
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			page, err := table.Query(ctx, request)
+			if err != nil || len(page.Items) != 1 || page.Items[0].ID != "seed" {
+				b.Fatalf("consistent Query result: page=%#v err=%v", page, err)
+			}
+		}
+	})
+
 	b.Run("Scan", func(b *testing.B) {
 		ctx, table := newBenchmarkTable(b)
 		b.ResetTimer()
@@ -143,6 +215,25 @@ func BenchmarkDynamoxRuntime(b *testing.B) {
 			page, err := table.Scan(ctx, dynamoxruntime.PageRequest{Limit: 10})
 			if err != nil || len(page.Items) != 1 || page.Items[0].ID != "seed" {
 				b.Fatalf("Scan result: page=%#v err=%v", page, err)
+			}
+		}
+	})
+
+	b.Run("ScanFilteredConsistent", func(b *testing.B) {
+		ctx, table := newBenchmarkTable(b)
+		options := dynamoxruntime.ScanOptions{
+			Page: dynamoxruntime.PageRequest{Limit: 10, ConsistentRead: true},
+			Filter: &dynamoxruntime.Expression{
+				Text:   "#tenant = :tenant",
+				Names:  map[string]string{"#tenant": "tenant"},
+				Values: map[string]any{":tenant": "tenant-1"},
+			},
+		}
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			page, err := table.ScanWithOptions(ctx, options)
+			if err != nil || len(page.Items) != 1 || page.Items[0].ID != "seed" {
+				b.Fatalf("filtered consistent Scan result: page=%#v err=%v", page, err)
 			}
 		}
 	})

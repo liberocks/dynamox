@@ -13,22 +13,153 @@ import (
 
 type ThemeOption struct {
 	Value string       `json:"value" dynamodbav:"value"`
-	Next  *ThemeOption `json:"next" dynamodbav:"next"`
+	Next  *ThemeOption `json:"next" dynamodbav:"next,omitempty"`
+}
+
+func (v ThemeOption) MarshalDynamoDBAttributeValue() (types.AttributeValue, error) {
+	type dynamoxPlainThemeOption ThemeOption
+	plain := dynamoxPlainThemeOption(v)
+	item, err := attributevalue.MarshalMap(plain)
+	if err != nil {
+		return nil, fmt.Errorf("dynamox: encode document ThemeOption: %w", err)
+	}
+	return &types.AttributeValueMemberM{Value: item}, nil
+}
+
+func (v *ThemeOption) UnmarshalDynamoDBAttributeValue(value types.AttributeValue) error {
+	document, ok := value.(*types.AttributeValueMemberM)
+	if !ok {
+		return fmt.Errorf("dynamox: decode document ThemeOption: expected map attribute")
+	}
+	plain := make(map[string]types.AttributeValue, len(document.Value))
+	for k, av := range document.Value {
+		plain[k] = av
+	}
+	type dynamoxPlainThemeOption ThemeOption
+	var plainValue dynamoxPlainThemeOption
+	if err := attributevalue.UnmarshalMap(plain, &plainValue); err != nil {
+		return fmt.Errorf("dynamox: decode document ThemeOption: %w", err)
+	}
+	out := ThemeOption(plainValue)
+	*v = out
+	return nil
 }
 
 type Preferences struct {
 	Theme     string       `json:"theme" dynamodbav:"theme"`
 	Digest    bool         `json:"digest" dynamodbav:"digest"`
-	Alternate *ThemeOption `json:"alternate" dynamodbav:"alternate"`
+	Alternate *ThemeOption `json:"alternate" dynamodbav:"alternate,omitempty"`
+}
+
+func (v Preferences) MarshalDynamoDBAttributeValue() (types.AttributeValue, error) {
+	type dynamoxPlainPreferences Preferences
+	plain := dynamoxPlainPreferences(v)
+	item, err := attributevalue.MarshalMap(plain)
+	if err != nil {
+		return nil, fmt.Errorf("dynamox: encode document Preferences: %w", err)
+	}
+	return &types.AttributeValueMemberM{Value: item}, nil
+}
+
+func (v *Preferences) UnmarshalDynamoDBAttributeValue(value types.AttributeValue) error {
+	document, ok := value.(*types.AttributeValueMemberM)
+	if !ok {
+		return fmt.Errorf("dynamox: decode document Preferences: expected map attribute")
+	}
+	plain := make(map[string]types.AttributeValue, len(document.Value))
+	for k, av := range document.Value {
+		plain[k] = av
+	}
+	type dynamoxPlainPreferences Preferences
+	var plainValue dynamoxPlainPreferences
+	if err := attributevalue.UnmarshalMap(plain, &plainValue); err != nil {
+		return fmt.Errorf("dynamox: decode document Preferences: %w", err)
+	}
+	out := Preferences(plainValue)
+	*v = out
+	return nil
+}
+
+type DocumentMetadata struct {
+	Source   string        `json:"source" dynamodbav:"source"`
+	Provider runtime.JSON  `json:"provider" dynamodbav:"provider"`
+	Metadata *runtime.JSON `json:"metadata" dynamodbav:"metadata,omitempty"`
+}
+
+func (v DocumentMetadata) MarshalDynamoDBAttributeValue() (types.AttributeValue, error) {
+	type dynamoxPlainDocumentMetadata DocumentMetadata
+	plain := dynamoxPlainDocumentMetadata(v)
+	var zeroProvider runtime.JSON
+	plain.Provider = zeroProvider
+	plain.Metadata = nil
+	item, err := attributevalue.MarshalMap(plain)
+	if err != nil {
+		return nil, fmt.Errorf("dynamox: encode document DocumentMetadata: %w", err)
+	}
+	{
+		av, err := runtime.MarshalJSON(v.Provider)
+		if err != nil {
+			return nil, fmt.Errorf("dynamox: encode DocumentMetadata.provider: %w", err)
+		}
+		item["provider"] = av
+	}
+	if v.Metadata != nil {
+		av, err := runtime.MarshalJSON(*v.Metadata)
+		if err != nil {
+			return nil, fmt.Errorf("dynamox: encode DocumentMetadata.metadata: %w", err)
+		}
+		item["metadata"] = av
+	}
+	return &types.AttributeValueMemberM{Value: item}, nil
+}
+
+func (v *DocumentMetadata) UnmarshalDynamoDBAttributeValue(value types.AttributeValue) error {
+	document, ok := value.(*types.AttributeValueMemberM)
+	if !ok {
+		return fmt.Errorf("dynamox: decode document DocumentMetadata: expected map attribute")
+	}
+	plain := make(map[string]types.AttributeValue, len(document.Value))
+	for k, av := range document.Value {
+		plain[k] = av
+	}
+	delete(plain, "provider")
+	delete(plain, "metadata")
+	type dynamoxPlainDocumentMetadata DocumentMetadata
+	var plainValue dynamoxPlainDocumentMetadata
+	if err := attributevalue.UnmarshalMap(plain, &plainValue); err != nil {
+		return fmt.Errorf("dynamox: decode document DocumentMetadata: %w", err)
+	}
+	out := DocumentMetadata(plainValue)
+	if av, ok := document.Value["provider"]; ok {
+		var value runtime.JSON
+		if err := runtime.UnmarshalJSON(av, &value); err != nil {
+			return fmt.Errorf("dynamox: decode DocumentMetadata.provider: %w", err)
+		}
+		out.Provider = value
+	}
+	if av, ok := document.Value["metadata"]; ok {
+		var value runtime.JSON
+		if err := runtime.UnmarshalJSON(av, &value); err != nil {
+			return fmt.Errorf("dynamox: decode DocumentMetadata.metadata: %w", err)
+		}
+		out.Metadata = &value
+	}
+	*v = out
+	return nil
 }
 
 type User struct {
-	ID               string       `json:"id" dynamodbav:"id"`
-	Name             string       `json:"name" dynamodbav:"name"`
-	Preferences      Preferences  `json:"preferences" dynamodbav:"preferences"`
-	Settings         Preferences  `json:"settings" dynamodbav:"settings"`
-	OptionalPreferences *Preferences `json:"optionalPreferences,omitempty" dynamodbav:"optionalPreferences,omitempty"`
-	Nickname         *string      `json:"nickname,omitempty" dynamodbav:"nickname,omitempty"`
+	ID                          string            `json:"id" dynamodbav:"id"`
+	Name                        string            `json:"name" dynamodbav:"name"`
+	Preferences                 Preferences       `json:"preferences" dynamodbav:"preferences"`
+	DocumentPreferences         DocumentMetadata  `json:"documentPreferences" dynamodbav:"documentPreferences"`
+	OptionalDocumentPreferences *DocumentMetadata `json:"optionalDocumentPreferences,omitempty" dynamodbav:"optionalDocumentPreferences,omitempty"`
+	ProviderPayload             runtime.JSON      `json:"providerPayload" dynamodbav:"providerPayload"`
+	OptionalPayload             *runtime.JSON     `json:"optionalPayload,omitempty" dynamodbav:"optionalPayload,omitempty"`
+	Payloads                    []runtime.JSON    `json:"payloads" dynamodbav:"payloads"`
+	Settings                    Preferences       `json:"settings" dynamodbav:"settings"`
+	OptionalPreferences            *Preferences      `json:"optionalPreferences,omitempty" dynamodbav:"optionalPreferences,omitempty"`
+	Nickname                    *string           `json:"nickname,omitempty" dynamodbav:"nickname,omitempty"`
 }
 
 type UserKey struct {
@@ -36,19 +167,31 @@ type UserKey struct {
 }
 
 type UserUpdate struct {
-	SetName               *string
-	SetPreferences        *Preferences
-	SetSettings           *Preferences
-	SetOptionalPreferences   *Preferences
-	ClearOptionalPreferences bool
-	SetNickname           *string
-	ClearNickname         bool
+	SetName                          *string
+	SetPreferences                   *Preferences
+	SetDocumentPreferences           *DocumentMetadata
+	SetOptionalDocumentPreferences   *DocumentMetadata
+	ClearOptionalDocumentPreferences bool
+	SetProviderPayload               *runtime.JSON
+	SetOptionalPayload               *runtime.JSON
+	ClearOptionalPayload             bool
+	SetPayloads                      *[]runtime.JSON
+	SetSettings                      *Preferences
+	SetOptionalPreferences              *Preferences
+	ClearOptionalPreferences            bool
+	SetNickname                      *string
+	ClearNickname                    bool
 }
 
 func keyUser(k UserKey) (map[string]types.AttributeValue, error) {
 	key := map[string]types.AttributeValue{}
-	av, _ := attributevalue.Marshal(k.ID)
-	key["id"] = av
+	{
+		av, err := attributevalue.Marshal(k.ID)
+		if err != nil {
+			return nil, fmt.Errorf("dynamox: encode User key id: %w", err)
+		}
+		key["id"] = av
+	}
 	return key, nil
 }
 
@@ -56,16 +199,45 @@ func encodeUser(v User) (map[string]types.AttributeValue, error) {
 	plain := v
 	var zeroPreferences Preferences
 	plain.Preferences = zeroPreferences
+	var zeroProviderPayload runtime.JSON
+	plain.ProviderPayload = zeroProviderPayload
+	plain.OptionalPayload = nil
+	var zeroPayloads []runtime.JSON
+	plain.Payloads = zeroPayloads
 	var zeroSettings Preferences
 	plain.Settings = zeroSettings
 	plain.OptionalPreferences = nil
-	item, _ := attributevalue.MarshalMap(plain)
+	item, err := attributevalue.MarshalMap(plain)
+	if err != nil {
+		return nil, fmt.Errorf("dynamox: encode User: %w", err)
+	}
 	{
 		data, err := json.Marshal(v.Preferences)
 		if err != nil {
 			return nil, fmt.Errorf("dynamox: encode User.preferences: %w", err)
 		}
 		item["preferences"] = &types.AttributeValueMemberS{Value: string(data)}
+	}
+	{
+		av, err := runtime.MarshalJSON(v.ProviderPayload)
+		if err != nil {
+			return nil, fmt.Errorf("dynamox: encode User.providerPayload: %w", err)
+		}
+		item["providerPayload"] = av
+	}
+	if v.OptionalPayload != nil {
+		av, err := runtime.MarshalJSON(*v.OptionalPayload)
+		if err != nil {
+			return nil, fmt.Errorf("dynamox: encode User.optionalPayload: %w", err)
+		}
+		item["optionalPayload"] = av
+	}
+	{
+		av, err := runtime.MarshalJSON(v.Payloads)
+		if err != nil {
+			return nil, fmt.Errorf("dynamox: encode User.payloads: %w", err)
+		}
+		item["payloads"] = av
 	}
 	{
 		data, err := json.Marshal(v.Settings)
@@ -90,11 +262,14 @@ func decodeUser(item map[string]types.AttributeValue) (User, error) {
 		plain[k] = v
 	}
 	delete(plain, "preferences")
+	delete(plain, "providerPayload")
+	delete(plain, "optionalPayload")
+	delete(plain, "payloads")
 	delete(plain, "settings")
 	delete(plain, "optionalPreferences")
 	var out User
 	if err := attributevalue.UnmarshalMap(plain, &out); err != nil {
-		return out, err
+		return out, fmt.Errorf("dynamox: decode User: %w", err)
 	}
 	if av, ok := item["preferences"]; ok {
 		raw, ok := av.(*types.AttributeValueMemberS)
@@ -104,6 +279,27 @@ func decodeUser(item map[string]types.AttributeValue) (User, error) {
 		if err := json.Unmarshal([]byte(raw.Value), &out.Preferences); err != nil {
 			return out, fmt.Errorf("dynamox: decode User.preferences: %w", err)
 		}
+	}
+	if av, ok := item["providerPayload"]; ok {
+		var value runtime.JSON
+		if err := runtime.UnmarshalJSON(av, &value); err != nil {
+			return out, fmt.Errorf("dynamox: decode User.providerPayload: %w", err)
+		}
+		out.ProviderPayload = value
+	}
+	if av, ok := item["optionalPayload"]; ok {
+		var value runtime.JSON
+		if err := runtime.UnmarshalJSON(av, &value); err != nil {
+			return out, fmt.Errorf("dynamox: decode User.optionalPayload: %w", err)
+		}
+		out.OptionalPayload = &value
+	}
+	if av, ok := item["payloads"]; ok {
+		var value []runtime.JSON
+		if err := runtime.UnmarshalJSON(av, &value); err != nil {
+			return out, fmt.Errorf("dynamox: decode User.payloads: %w", err)
+		}
+		out.Payloads = value
 	}
 	if av, ok := item["settings"]; ok {
 		raw, ok := av.(*types.AttributeValueMemberS)
@@ -124,6 +320,124 @@ func decodeUser(item map[string]types.AttributeValue) (User, error) {
 		}
 	}
 	return out, nil
+}
+
+func encodeUserUpdate(p UserUpdate) (map[string]types.AttributeValue, []string, error) {
+	set := map[string]types.AttributeValue{}
+	remove := []string{}
+	if p.SetName != nil {
+		av, err := attributevalue.Marshal(*p.SetName)
+		if err != nil {
+			return nil, nil, fmt.Errorf("dynamox: encode User.name: %w", err)
+		}
+		set["name"] = av
+	}
+	if p.SetPreferences != nil {
+		av, err := func() (types.AttributeValue, error) {
+			data, err := json.Marshal(*p.SetPreferences)
+			if err != nil {
+				return nil, err
+			}
+			return &types.AttributeValueMemberS{Value: string(data)}, nil
+		}()
+		if err != nil {
+			return nil, nil, fmt.Errorf("dynamox: encode User.preferences: %w", err)
+		}
+		set["preferences"] = av
+	}
+	if p.SetDocumentPreferences != nil {
+		av, err := attributevalue.Marshal(*p.SetDocumentPreferences)
+		if err != nil {
+			return nil, nil, fmt.Errorf("dynamox: encode User.documentPreferences: %w", err)
+		}
+		set["documentPreferences"] = av
+	}
+	if p.SetOptionalDocumentPreferences != nil && p.ClearOptionalDocumentPreferences {
+		return nil, nil, fmt.Errorf("dynamox: optionalDocumentPreferences cannot be set and cleared together")
+	}
+	if p.SetOptionalDocumentPreferences != nil {
+		av, err := attributevalue.Marshal(*p.SetOptionalDocumentPreferences)
+		if err != nil {
+			return nil, nil, fmt.Errorf("dynamox: encode User.optionalDocumentPreferences: %w", err)
+		}
+		set["optionalDocumentPreferences"] = av
+	}
+	if p.ClearOptionalDocumentPreferences {
+		remove = append(remove, "optionalDocumentPreferences")
+	}
+	if p.SetProviderPayload != nil {
+		av, err := runtime.MarshalJSON(*p.SetProviderPayload)
+		if err != nil {
+			return nil, nil, fmt.Errorf("dynamox: encode User.providerPayload: %w", err)
+		}
+		set["providerPayload"] = av
+	}
+	if p.SetOptionalPayload != nil && p.ClearOptionalPayload {
+		return nil, nil, fmt.Errorf("dynamox: optionalPayload cannot be set and cleared together")
+	}
+	if p.SetOptionalPayload != nil {
+		av, err := runtime.MarshalJSON(*p.SetOptionalPayload)
+		if err != nil {
+			return nil, nil, fmt.Errorf("dynamox: encode User.optionalPayload: %w", err)
+		}
+		set["optionalPayload"] = av
+	}
+	if p.ClearOptionalPayload {
+		remove = append(remove, "optionalPayload")
+	}
+	if p.SetPayloads != nil {
+		av, err := runtime.MarshalJSON(*p.SetPayloads)
+		if err != nil {
+			return nil, nil, fmt.Errorf("dynamox: encode User.payloads: %w", err)
+		}
+		set["payloads"] = av
+	}
+	if p.SetSettings != nil {
+		av, err := func() (types.AttributeValue, error) {
+			data, err := json.Marshal(*p.SetSettings)
+			if err != nil {
+				return nil, err
+			}
+			return &types.AttributeValueMemberS{Value: string(data)}, nil
+		}()
+		if err != nil {
+			return nil, nil, fmt.Errorf("dynamox: encode User.settings: %w", err)
+		}
+		set["settings"] = av
+	}
+	if p.SetOptionalPreferences != nil && p.ClearOptionalPreferences {
+		return nil, nil, fmt.Errorf("dynamox: optionalPreferences cannot be set and cleared together")
+	}
+	if p.SetOptionalPreferences != nil {
+		av, err := func() (types.AttributeValue, error) {
+			data, err := json.Marshal(*p.SetOptionalPreferences)
+			if err != nil {
+				return nil, err
+			}
+			return &types.AttributeValueMemberS{Value: string(data)}, nil
+		}()
+		if err != nil {
+			return nil, nil, fmt.Errorf("dynamox: encode User.optionalPreferences: %w", err)
+		}
+		set["optionalPreferences"] = av
+	}
+	if p.ClearOptionalPreferences {
+		remove = append(remove, "optionalPreferences")
+	}
+	if p.SetNickname != nil && p.ClearNickname {
+		return nil, nil, fmt.Errorf("dynamox: nickname cannot be set and cleared together")
+	}
+	if p.SetNickname != nil {
+		av, err := attributevalue.Marshal(*p.SetNickname)
+		if err != nil {
+			return nil, nil, fmt.Errorf("dynamox: encode User.nickname: %w", err)
+		}
+		set["nickname"] = av
+	}
+	if p.ClearNickname {
+		remove = append(remove, "nickname")
+	}
+	return set, remove, nil
 }
 
 type Post struct {
@@ -150,8 +464,13 @@ type PostUpdate struct {
 
 func keyPost(k PostKey) (map[string]types.AttributeValue, error) {
 	key := map[string]types.AttributeValue{}
-	av, _ := attributevalue.Marshal(k.ID)
-	key["id"] = av
+	{
+		av, err := attributevalue.Marshal(k.ID)
+		if err != nil {
+			return nil, fmt.Errorf("dynamox: encode Post key id: %w", err)
+		}
+		key["id"] = av
+	}
 	return key, nil
 }
 
@@ -161,13 +480,19 @@ func encodePost(v Post) (map[string]types.AttributeValue, error) {
 	plain.CreatedAt = zeroCreatedAt
 	var zeroEditTimes []time.Time
 	plain.EditTimes = zeroEditTimes
-	item, _ := attributevalue.MarshalMap(plain)
+	item, err := attributevalue.MarshalMap(plain)
+	if err != nil {
+		return nil, fmt.Errorf("dynamox: encode Post: %w", err)
+	}
 	item["createdAt"] = &types.AttributeValueMemberS{Value: v.CreatedAt.UTC().Format(time.RFC3339Nano)}
 	rawEditTimes := make([]string, len(v.EditTimes))
 	for i, value := range v.EditTimes {
 		rawEditTimes[i] = value.UTC().Format(time.RFC3339Nano)
 	}
-	av, _ := attributevalue.Marshal(rawEditTimes)
+	av, err := attributevalue.Marshal(rawEditTimes)
+	if err != nil {
+		return nil, fmt.Errorf("dynamox: encode Post.editTimes: %w", err)
+	}
 	item["editTimes"] = av
 	return item, nil
 }
@@ -181,7 +506,7 @@ func decodePost(item map[string]types.AttributeValue) (Post, error) {
 	delete(plain, "editTimes")
 	var out Post
 	if err := attributevalue.UnmarshalMap(plain, &out); err != nil {
-		return out, err
+		return out, fmt.Errorf("dynamox: decode Post: %w", err)
 	}
 	if av, ok := item["createdAt"]; ok {
 		var raw string
@@ -212,6 +537,61 @@ func decodePost(item map[string]types.AttributeValue) (Post, error) {
 	return out, nil
 }
 
+func encodePostUpdate(p PostUpdate) (map[string]types.AttributeValue, []string, error) {
+	set := map[string]types.AttributeValue{}
+	remove := []string{}
+	if p.SetAuthorID != nil {
+		av, err := attributevalue.Marshal(*p.SetAuthorID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("dynamox: encode Post.authorId: %w", err)
+		}
+		set["authorId"] = av
+	}
+	if p.SetEditorID != nil && p.ClearEditorID {
+		return nil, nil, fmt.Errorf("dynamox: editorId cannot be set and cleared together")
+	}
+	if p.SetEditorID != nil {
+		av, err := attributevalue.Marshal(*p.SetEditorID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("dynamox: encode Post.editorId: %w", err)
+		}
+		set["editorId"] = av
+	}
+	if p.ClearEditorID {
+		remove = append(remove, "editorId")
+	}
+	if p.SetTitle != nil {
+		av, err := attributevalue.Marshal(*p.SetTitle)
+		if err != nil {
+			return nil, nil, fmt.Errorf("dynamox: encode Post.title: %w", err)
+		}
+		set["title"] = av
+	}
+	if p.SetCreatedAt != nil {
+		av, err := func() (types.AttributeValue, error) {
+			return &types.AttributeValueMemberS{Value: (*p.SetCreatedAt).UTC().Format(time.RFC3339Nano)}, nil
+		}()
+		if err != nil {
+			return nil, nil, fmt.Errorf("dynamox: encode Post.createdAt: %w", err)
+		}
+		set["createdAt"] = av
+	}
+	if p.SetEditTimes != nil {
+		av, err := func() (types.AttributeValue, error) {
+			raw := make([]string, len(*p.SetEditTimes))
+			for i, value := range *p.SetEditTimes {
+				raw[i] = value.UTC().Format(time.RFC3339Nano)
+			}
+			return attributevalue.Marshal(raw)
+		}()
+		if err != nil {
+			return nil, nil, fmt.Errorf("dynamox: encode Post.editTimes: %w", err)
+		}
+		set["editTimes"] = av
+	}
+	return set, remove, nil
+}
+
 type SequenceItem struct {
 	ID    int64  `json:"id" dynamodbav:"id"`
 	Value string `json:"value" dynamodbav:"value"`
@@ -227,14 +607,22 @@ type SequenceItemUpdate struct {
 
 func keySequenceItem(k SequenceItemKey) (map[string]types.AttributeValue, error) {
 	key := map[string]types.AttributeValue{}
-	av, _ := attributevalue.Marshal(k.ID)
-	key["id"] = av
+	{
+		av, err := attributevalue.Marshal(k.ID)
+		if err != nil {
+			return nil, fmt.Errorf("dynamox: encode SequenceItem key id: %w", err)
+		}
+		key["id"] = av
+	}
 	return key, nil
 }
 
 func encodeSequenceItem(v SequenceItem) (map[string]types.AttributeValue, error) {
 	plain := v
-	item, _ := attributevalue.MarshalMap(plain)
+	item, err := attributevalue.MarshalMap(plain)
+	if err != nil {
+		return nil, fmt.Errorf("dynamox: encode SequenceItem: %w", err)
+	}
 	return item, nil
 }
 
@@ -245,27 +633,47 @@ func decodeSequenceItem(item map[string]types.AttributeValue) (SequenceItem, err
 	}
 	var out SequenceItem
 	if err := attributevalue.UnmarshalMap(plain, &out); err != nil {
-		return out, err
+		return out, fmt.Errorf("dynamox: decode SequenceItem: %w", err)
 	}
 	return out, nil
 }
 
-type Client struct {
-	idGenerator  runtime.IDGenerator
-	user         runtime.Table[User, UserKey]
-	post         runtime.Table[Post, PostKey]
-	sequenceItem runtime.Table[SequenceItem, SequenceItemKey]
+func encodeSequenceItemUpdate(p SequenceItemUpdate) (map[string]types.AttributeValue, []string, error) {
+	set := map[string]types.AttributeValue{}
+	remove := []string{}
+	if p.SetValue != nil {
+		av, err := attributevalue.Marshal(*p.SetValue)
+		if err != nil {
+			return nil, nil, fmt.Errorf("dynamox: encode SequenceItem.value: %w", err)
+		}
+		set["value"] = av
+	}
+	return set, remove, nil
 }
 
-func NewClient(db runtime.DynamoAPI) *Client { return NewClientWithIDGenerator(db, runtime.GenerateID) }
+type Client struct {
+	idGenerator   runtime.IDGenerator
+	sequenceTable string
+	user          runtime.Table[User, UserKey]
+	post          runtime.Table[Post, PostKey]
+	sequenceItem  runtime.Table[SequenceItem, SequenceItemKey]
+}
+
+func NewClient(db runtime.DynamoAPI) *Client {
+	return NewClientWithOptions(db, runtime.ClientOptions{})
+}
 func NewClientWithIDGenerator(db runtime.DynamoAPI, generateID runtime.IDGenerator) *Client {
+	return NewClientWithOptions(db, runtime.ClientOptions{IDGenerator: generateID})
+}
+func NewClientWithOptions(db runtime.DynamoAPI, options runtime.ClientOptions) *Client {
+	generateID := options.IDGenerator
 	if generateID == nil {
 		generateID = runtime.GenerateID
 	}
-	c := &Client{idGenerator: generateID}
-	c.user = runtime.Table[User, UserKey]{DB: db, Name: "users", PartitionName: "id", SortName: "", Codec: runtime.Codec[User]{Encode: encodeUser, Decode: decodeUser}, Key: keyUser}
-	c.post = runtime.Table[Post, PostKey]{DB: db, Name: "posts", PartitionName: "id", SortName: "", Codec: runtime.Codec[Post]{Encode: encodePost, Decode: decodePost}, Key: keyPost}
-	c.sequenceItem = runtime.Table[SequenceItem, SequenceItemKey]{DB: db, Name: "sequence_items", PartitionName: "id", SortName: "", Codec: runtime.Codec[SequenceItem]{Encode: encodeSequenceItem, Decode: decodeSequenceItem}, Key: keySequenceItem}
+	c := &Client{idGenerator: generateID, sequenceTable: options.TableName(runtime.SequenceTableName)}
+	c.user = runtime.Table[User, UserKey]{DB: db, Name: options.TableName("users"), PartitionName: "id", SortName: "", Codec: runtime.Codec[User]{Encode: encodeUser, Decode: decodeUser}, Key: keyUser}
+	c.post = runtime.Table[Post, PostKey]{DB: db, Name: options.TableName("posts"), PartitionName: "id", SortName: "", Codec: runtime.Codec[Post]{Encode: encodePost, Decode: decodePost}, Key: keyPost}
+	c.sequenceItem = runtime.Table[SequenceItem, SequenceItemKey]{DB: db, Name: options.TableName("sequence_items"), PartitionName: "id", SortName: "", Codec: runtime.Codec[SequenceItem]{Encode: encodeSequenceItem, Decode: decodeSequenceItem}, Key: keySequenceItem}
 	return c
 }
 
@@ -280,6 +688,9 @@ func (c *Client) db() runtime.DynamoAPI {
 }
 
 func (c *Client) CreateUser(ctx context.Context, v User) (User, error) {
+	return c.CreateUserWithOptions(ctx, v, runtime.WriteOptions{})
+}
+func (c *Client) CreateUserWithOptions(ctx context.Context, v User, options runtime.WriteOptions) (User, error) {
 	if v.ID == "" {
 		id, err := c.idGenerator("uuidv7")
 		if err != nil {
@@ -287,124 +698,91 @@ func (c *Client) CreateUser(ctx context.Context, v User) (User, error) {
 		}
 		v.ID = id
 	}
-	if err := c.user.Create(ctx, v); err != nil {
+	if err := c.user.CreateWithOptions(ctx, v, options); err != nil {
 		return User{}, err
 	}
 	return v, nil
 }
+func (c *Client) PutUser(ctx context.Context, v User, options ...runtime.WriteOptions) error {
+	return c.user.Put(ctx, v, options...)
+}
 func (c *Client) GetUser(ctx context.Context, k UserKey) (User, bool, error) {
 	return c.user.Get(ctx, k)
 }
+func (c *Client) GetUserWithOptions(ctx context.Context, k UserKey, options runtime.ReadOptions) (User, bool, error) {
+	return c.user.GetWithOptions(ctx, k, options)
+}
 func (c *Client) DeleteUser(ctx context.Context, k UserKey) error { return c.user.Delete(ctx, k) }
+func (c *Client) DeleteUserWithOptions(ctx context.Context, k UserKey, options runtime.WriteOptions) error {
+	return c.user.DeleteWithOptions(ctx, k, options)
+}
 func (c *Client) ScanUser(ctx context.Context, p runtime.PageRequest) (runtime.Page[User], error) {
 	return c.user.Scan(ctx, p)
 }
+func (c *Client) ScanUserWithOptions(ctx context.Context, o runtime.ScanOptions) (runtime.Page[User], error) {
+	return c.user.ScanWithOptions(ctx, o)
+}
 func (c *Client) UpdateUser(ctx context.Context, k UserKey, p UserUpdate) error {
-	set := map[string]types.AttributeValue{}
-	remove := []string{}
-	if p.SetName != nil {
-		av, _ := attributevalue.Marshal(*p.SetName)
-		set["name"] = av
+	return c.UpdateUserWithOptions(ctx, k, p, runtime.WriteOptions{})
+}
+func (c *Client) UpdateUserWithOptions(ctx context.Context, k UserKey, p UserUpdate, options runtime.WriteOptions) error {
+	set, remove, err := encodeUserUpdate(p)
+	if err != nil {
+		return err
 	}
-	if p.SetPreferences != nil {
-		data, err := json.Marshal(*p.SetPreferences)
-		if err != nil {
-			return fmt.Errorf("dynamox: encode User.preferences: %w", err)
-		}
-		set["preferences"] = &types.AttributeValueMemberS{Value: string(data)}
+	return c.user.UpdateWithOptions(ctx, k, set, remove, options, "id")
+}
+func (c *Client) UpdateUserReturning(ctx context.Context, k UserKey, p UserUpdate, options ...runtime.WriteOptions) (User, error) {
+	var o runtime.WriteOptions
+	if len(options) > 0 {
+		o = options[0]
 	}
-	if p.SetSettings != nil {
-		data, err := json.Marshal(*p.SetSettings)
-		if err != nil {
-			return fmt.Errorf("dynamox: encode User.settings: %w", err)
-		}
-		set["settings"] = &types.AttributeValueMemberS{Value: string(data)}
+	set, remove, err := encodeUserUpdate(p)
+	if err != nil {
+		return User{}, err
 	}
-	if p.SetOptionalPreferences != nil && p.ClearOptionalPreferences {
-		return fmt.Errorf("dynamox: optionalPreferences cannot be set and cleared together")
-	}
-	if p.SetOptionalPreferences != nil {
-		data, err := json.Marshal(*p.SetOptionalPreferences)
-		if err != nil {
-			return fmt.Errorf("dynamox: encode User.optionalPreferences: %w", err)
-		}
-		set["optionalPreferences"] = &types.AttributeValueMemberS{Value: string(data)}
-	}
-	if p.ClearOptionalPreferences {
-		remove = append(remove, "optionalPreferences")
-	}
-	if p.SetNickname != nil && p.ClearNickname {
-		return fmt.Errorf("dynamox: nickname cannot be set and cleared together")
-	}
-	if p.SetNickname != nil {
-		av, _ := attributevalue.Marshal(*p.SetNickname)
-		set["nickname"] = av
-	}
-	if p.ClearNickname {
-		remove = append(remove, "nickname")
-	}
-	return c.user.Update(ctx, k, set, remove, "id")
+	return c.user.UpdateReturning(ctx, k, set, remove, o, "id")
 }
 func (c *Client) ReadUser(k UserKey, dst *User) (runtime.ReadItem, error) {
 	return runtime.Read(c.user, k, dst)
 }
 func (c *Client) WriteUser(v User) (runtime.WriteItem, error) { return c.user.PutOperation(v) }
+func (c *Client) WriteUserWithOptions(v User, options runtime.WriteOptions) (runtime.WriteItem, error) {
+	return c.user.PutOperationWithOptions(v, options)
+}
+func (c *Client) CreateUserOperation(v User, options ...runtime.WriteOptions) (runtime.WriteItem, error) {
+	var o runtime.WriteOptions
+	if len(options) > 0 {
+		o = options[0]
+	}
+	return c.user.CreateOperation(v, o)
+}
 func (c *Client) DeleteUserOperation(k UserKey) (runtime.WriteItem, error) {
 	return c.user.DeleteOperation(k)
 }
+func (c *Client) DeleteUserOperationWithOptions(k UserKey, o runtime.WriteOptions) (runtime.WriteItem, error) {
+	return c.user.DeleteOperationWithOptions(k, o)
+}
 func (c *Client) UpdateUserOperation(k UserKey, p UserUpdate) (runtime.WriteItem, error) {
-	set := map[string]types.AttributeValue{}
-	remove := []string{}
-	if p.SetName != nil {
-		av, _ := attributevalue.Marshal(*p.SetName)
-		set["name"] = av
+	return c.UpdateUserOperationWithOptions(k, p, runtime.WriteOptions{})
+}
+func (c *Client) UpdateUserOperationWithOptions(k UserKey, p UserUpdate, o runtime.WriteOptions) (runtime.WriteItem, error) {
+	set, remove, err := encodeUserUpdate(p)
+	if err != nil {
+		return runtime.WriteItem{}, err
 	}
-	if p.SetPreferences != nil {
-		data, err := json.Marshal(*p.SetPreferences)
-		if err != nil {
-			return runtime.WriteItem{}, fmt.Errorf("dynamox: encode User.preferences: %w", err)
-		}
-		set["preferences"] = &types.AttributeValueMemberS{Value: string(data)}
-	}
-	if p.SetSettings != nil {
-		data, err := json.Marshal(*p.SetSettings)
-		if err != nil {
-			return runtime.WriteItem{}, fmt.Errorf("dynamox: encode User.settings: %w", err)
-		}
-		set["settings"] = &types.AttributeValueMemberS{Value: string(data)}
-	}
-	if p.SetOptionalPreferences != nil && p.ClearOptionalPreferences {
-		return runtime.WriteItem{}, fmt.Errorf("dynamox: optionalPreferences cannot be set and cleared together")
-	}
-	if p.SetOptionalPreferences != nil {
-		data, err := json.Marshal(*p.SetOptionalPreferences)
-		if err != nil {
-			return runtime.WriteItem{}, fmt.Errorf("dynamox: encode User.optionalPreferences: %w", err)
-		}
-		set["optionalPreferences"] = &types.AttributeValueMemberS{Value: string(data)}
-	}
-	if p.ClearOptionalPreferences {
-		remove = append(remove, "optionalPreferences")
-	}
-	if p.SetNickname != nil && p.ClearNickname {
-		return runtime.WriteItem{}, fmt.Errorf("dynamox: nickname cannot be set and cleared together")
-	}
-	if p.SetNickname != nil {
-		av, _ := attributevalue.Marshal(*p.SetNickname)
-		set["nickname"] = av
-	}
-	if p.ClearNickname {
-		remove = append(remove, "nickname")
-	}
-	return c.user.UpdateOperation(k, set, remove, "id")
+	return c.user.UpdateOperationWithOptions(k, set, remove, o, "id")
 }
 
 func (c *Client) QueryUserByID(ctx context.Context, value string, page runtime.PageRequest) (runtime.Page[User], error) {
-	q := runtime.QueryRequest{IndexName: "", PartitionName: "id", PartitionValue: value, SortName: "", Page: page}
+	q := runtime.QueryRequest{IndexName: "", PartitionName: "id", PartitionValue: value, SortName: "", Page: page, GlobalIndex: false}
 	return c.user.Query(ctx, q)
 }
 
 func (c *Client) CreatePost(ctx context.Context, v Post) (Post, error) {
+	return c.CreatePostWithOptions(ctx, v, runtime.WriteOptions{})
+}
+func (c *Client) CreatePostWithOptions(ctx context.Context, v Post, options runtime.WriteOptions) (Post, error) {
 	if v.ID == "" {
 		id, err := c.idGenerator("objectid")
 		if err != nil {
@@ -412,96 +790,84 @@ func (c *Client) CreatePost(ctx context.Context, v Post) (Post, error) {
 		}
 		v.ID = id
 	}
-	if err := c.post.Create(ctx, v); err != nil {
+	if err := c.post.CreateWithOptions(ctx, v, options); err != nil {
 		return Post{}, err
 	}
 	return v, nil
 }
+func (c *Client) PutPost(ctx context.Context, v Post, options ...runtime.WriteOptions) error {
+	return c.post.Put(ctx, v, options...)
+}
 func (c *Client) GetPost(ctx context.Context, k PostKey) (Post, bool, error) {
 	return c.post.Get(ctx, k)
 }
+func (c *Client) GetPostWithOptions(ctx context.Context, k PostKey, options runtime.ReadOptions) (Post, bool, error) {
+	return c.post.GetWithOptions(ctx, k, options)
+}
 func (c *Client) DeletePost(ctx context.Context, k PostKey) error { return c.post.Delete(ctx, k) }
+func (c *Client) DeletePostWithOptions(ctx context.Context, k PostKey, options runtime.WriteOptions) error {
+	return c.post.DeleteWithOptions(ctx, k, options)
+}
 func (c *Client) ScanPost(ctx context.Context, p runtime.PageRequest) (runtime.Page[Post], error) {
 	return c.post.Scan(ctx, p)
 }
+func (c *Client) ScanPostWithOptions(ctx context.Context, o runtime.ScanOptions) (runtime.Page[Post], error) {
+	return c.post.ScanWithOptions(ctx, o)
+}
 func (c *Client) UpdatePost(ctx context.Context, k PostKey, p PostUpdate) error {
-	set := map[string]types.AttributeValue{}
-	remove := []string{}
-	if p.SetAuthorID != nil {
-		av, _ := attributevalue.Marshal(*p.SetAuthorID)
-		set["authorId"] = av
+	return c.UpdatePostWithOptions(ctx, k, p, runtime.WriteOptions{})
+}
+func (c *Client) UpdatePostWithOptions(ctx context.Context, k PostKey, p PostUpdate, options runtime.WriteOptions) error {
+	set, remove, err := encodePostUpdate(p)
+	if err != nil {
+		return err
 	}
-	if p.SetEditorID != nil && p.ClearEditorID {
-		return fmt.Errorf("dynamox: editorId cannot be set and cleared together")
+	return c.post.UpdateWithOptions(ctx, k, set, remove, options, "id")
+}
+func (c *Client) UpdatePostReturning(ctx context.Context, k PostKey, p PostUpdate, options ...runtime.WriteOptions) (Post, error) {
+	var o runtime.WriteOptions
+	if len(options) > 0 {
+		o = options[0]
 	}
-	if p.SetEditorID != nil {
-		av, _ := attributevalue.Marshal(*p.SetEditorID)
-		set["editorId"] = av
+	set, remove, err := encodePostUpdate(p)
+	if err != nil {
+		return Post{}, err
 	}
-	if p.ClearEditorID {
-		remove = append(remove, "editorId")
-	}
-	if p.SetTitle != nil {
-		av, _ := attributevalue.Marshal(*p.SetTitle)
-		set["title"] = av
-	}
-	if p.SetCreatedAt != nil {
-		set["createdAt"] = &types.AttributeValueMemberS{Value: (*p.SetCreatedAt).UTC().Format(time.RFC3339Nano)}
-	}
-	if p.SetEditTimes != nil {
-		raw := make([]string, len(*p.SetEditTimes))
-		for i, value := range *p.SetEditTimes {
-			raw[i] = value.UTC().Format(time.RFC3339Nano)
-		}
-		av, _ := attributevalue.Marshal(raw)
-		set["editTimes"] = av
-	}
-	return c.post.Update(ctx, k, set, remove, "id")
+	return c.post.UpdateReturning(ctx, k, set, remove, o, "id")
 }
 func (c *Client) ReadPost(k PostKey, dst *Post) (runtime.ReadItem, error) {
 	return runtime.Read(c.post, k, dst)
 }
 func (c *Client) WritePost(v Post) (runtime.WriteItem, error) { return c.post.PutOperation(v) }
+func (c *Client) WritePostWithOptions(v Post, options runtime.WriteOptions) (runtime.WriteItem, error) {
+	return c.post.PutOperationWithOptions(v, options)
+}
+func (c *Client) CreatePostOperation(v Post, options ...runtime.WriteOptions) (runtime.WriteItem, error) {
+	var o runtime.WriteOptions
+	if len(options) > 0 {
+		o = options[0]
+	}
+	return c.post.CreateOperation(v, o)
+}
 func (c *Client) DeletePostOperation(k PostKey) (runtime.WriteItem, error) {
 	return c.post.DeleteOperation(k)
 }
+func (c *Client) DeletePostOperationWithOptions(k PostKey, o runtime.WriteOptions) (runtime.WriteItem, error) {
+	return c.post.DeleteOperationWithOptions(k, o)
+}
 func (c *Client) UpdatePostOperation(k PostKey, p PostUpdate) (runtime.WriteItem, error) {
-	set := map[string]types.AttributeValue{}
-	remove := []string{}
-	if p.SetAuthorID != nil {
-		av, _ := attributevalue.Marshal(*p.SetAuthorID)
-		set["authorId"] = av
+	return c.UpdatePostOperationWithOptions(k, p, runtime.WriteOptions{})
+}
+func (c *Client) UpdatePostOperationWithOptions(k PostKey, p PostUpdate, o runtime.WriteOptions) (runtime.WriteItem, error) {
+	set, remove, err := encodePostUpdate(p)
+	if err != nil {
+		return runtime.WriteItem{}, err
 	}
-	if p.SetEditorID != nil && p.ClearEditorID {
-		return runtime.WriteItem{}, fmt.Errorf("dynamox: editorId cannot be set and cleared together")
-	}
-	if p.SetEditorID != nil {
-		av, _ := attributevalue.Marshal(*p.SetEditorID)
-		set["editorId"] = av
-	}
-	if p.ClearEditorID {
-		remove = append(remove, "editorId")
-	}
-	if p.SetTitle != nil {
-		av, _ := attributevalue.Marshal(*p.SetTitle)
-		set["title"] = av
-	}
-	if p.SetCreatedAt != nil {
-		set["createdAt"] = &types.AttributeValueMemberS{Value: (*p.SetCreatedAt).UTC().Format(time.RFC3339Nano)}
-	}
-	if p.SetEditTimes != nil {
-		raw := make([]string, len(*p.SetEditTimes))
-		for i, value := range *p.SetEditTimes {
-			raw[i] = value.UTC().Format(time.RFC3339Nano)
-		}
-		av, _ := attributevalue.Marshal(raw)
-		set["editTimes"] = av
-	}
-	return c.post.UpdateOperation(k, set, remove, "id")
+	return c.post.UpdateOperationWithOptions(k, set, remove, o, "id")
 }
 
 func (c *Client) QueryPostByID(ctx context.Context, value string, page runtime.PageRequest) (runtime.Page[Post], error) {
-	q := runtime.QueryRequest{IndexName: "", PartitionName: "id", PartitionValue: value, SortName: "", Page: page}
+	q := runtime.QueryRequest{IndexName: "", PartitionName: "id", PartitionValue: value, SortName: "", Page: page, GlobalIndex: false}
 	return c.post.Query(ctx, q)
 }
 
@@ -511,7 +877,7 @@ type PostByAuthorSort struct {
 }
 
 func (c *Client) QueryPostUsingByAuthor(ctx context.Context, value string, sort *PostByAuthorSort, page runtime.PageRequest) (runtime.Page[Post], error) {
-	q := runtime.QueryRequest{IndexName: "ByAuthor", PartitionName: "authorId", PartitionValue: value, SortName: "createdAt", Page: page}
+	q := runtime.QueryRequest{IndexName: "ByAuthor", PartitionName: "authorId", PartitionValue: value, SortName: "createdAt", Page: page, GlobalIndex: true}
 	if sort != nil {
 		q.Sort = &runtime.Condition{Operator: sort.Operator, Value: sort.Value}
 	}
@@ -519,35 +885,62 @@ func (c *Client) QueryPostUsingByAuthor(ctx context.Context, value string, sort 
 }
 
 func (c *Client) CreateSequenceItem(ctx context.Context, v SequenceItem) (SequenceItem, error) {
+	return c.CreateSequenceItemWithOptions(ctx, v, runtime.WriteOptions{})
+}
+func (c *Client) CreateSequenceItemWithOptions(ctx context.Context, v SequenceItem, options runtime.WriteOptions) (SequenceItem, error) {
 	if v.ID == 0 {
-		id, err := runtime.NextSerial(ctx, c.db(), "sequence_items")
+		id, err := runtime.NextSerialWithTable(ctx, c.db(), c.sequenceTable, "sequence_items")
 		if err != nil {
 			return SequenceItem{}, err
 		}
 		v.ID = id
 	}
-	if err := c.sequenceItem.Create(ctx, v); err != nil {
+	if err := c.sequenceItem.CreateWithOptions(ctx, v, options); err != nil {
 		return SequenceItem{}, err
 	}
 	return v, nil
 }
+func (c *Client) PutSequenceItem(ctx context.Context, v SequenceItem, options ...runtime.WriteOptions) error {
+	return c.sequenceItem.Put(ctx, v, options...)
+}
 func (c *Client) GetSequenceItem(ctx context.Context, k SequenceItemKey) (SequenceItem, bool, error) {
 	return c.sequenceItem.Get(ctx, k)
+}
+func (c *Client) GetSequenceItemWithOptions(ctx context.Context, k SequenceItemKey, options runtime.ReadOptions) (SequenceItem, bool, error) {
+	return c.sequenceItem.GetWithOptions(ctx, k, options)
 }
 func (c *Client) DeleteSequenceItem(ctx context.Context, k SequenceItemKey) error {
 	return c.sequenceItem.Delete(ctx, k)
 }
+func (c *Client) DeleteSequenceItemWithOptions(ctx context.Context, k SequenceItemKey, options runtime.WriteOptions) error {
+	return c.sequenceItem.DeleteWithOptions(ctx, k, options)
+}
 func (c *Client) ScanSequenceItem(ctx context.Context, p runtime.PageRequest) (runtime.Page[SequenceItem], error) {
 	return c.sequenceItem.Scan(ctx, p)
 }
+func (c *Client) ScanSequenceItemWithOptions(ctx context.Context, o runtime.ScanOptions) (runtime.Page[SequenceItem], error) {
+	return c.sequenceItem.ScanWithOptions(ctx, o)
+}
 func (c *Client) UpdateSequenceItem(ctx context.Context, k SequenceItemKey, p SequenceItemUpdate) error {
-	set := map[string]types.AttributeValue{}
-	remove := []string{}
-	if p.SetValue != nil {
-		av, _ := attributevalue.Marshal(*p.SetValue)
-		set["value"] = av
+	return c.UpdateSequenceItemWithOptions(ctx, k, p, runtime.WriteOptions{})
+}
+func (c *Client) UpdateSequenceItemWithOptions(ctx context.Context, k SequenceItemKey, p SequenceItemUpdate, options runtime.WriteOptions) error {
+	set, remove, err := encodeSequenceItemUpdate(p)
+	if err != nil {
+		return err
 	}
-	return c.sequenceItem.Update(ctx, k, set, remove, "id")
+	return c.sequenceItem.UpdateWithOptions(ctx, k, set, remove, options, "id")
+}
+func (c *Client) UpdateSequenceItemReturning(ctx context.Context, k SequenceItemKey, p SequenceItemUpdate, options ...runtime.WriteOptions) (SequenceItem, error) {
+	var o runtime.WriteOptions
+	if len(options) > 0 {
+		o = options[0]
+	}
+	set, remove, err := encodeSequenceItemUpdate(p)
+	if err != nil {
+		return SequenceItem{}, err
+	}
+	return c.sequenceItem.UpdateReturning(ctx, k, set, remove, o, "id")
 }
 func (c *Client) ReadSequenceItem(k SequenceItemKey, dst *SequenceItem) (runtime.ReadItem, error) {
 	return runtime.Read(c.sequenceItem, k, dst)
@@ -555,21 +948,35 @@ func (c *Client) ReadSequenceItem(k SequenceItemKey, dst *SequenceItem) (runtime
 func (c *Client) WriteSequenceItem(v SequenceItem) (runtime.WriteItem, error) {
 	return c.sequenceItem.PutOperation(v)
 }
+func (c *Client) WriteSequenceItemWithOptions(v SequenceItem, options runtime.WriteOptions) (runtime.WriteItem, error) {
+	return c.sequenceItem.PutOperationWithOptions(v, options)
+}
+func (c *Client) CreateSequenceItemOperation(v SequenceItem, options ...runtime.WriteOptions) (runtime.WriteItem, error) {
+	var o runtime.WriteOptions
+	if len(options) > 0 {
+		o = options[0]
+	}
+	return c.sequenceItem.CreateOperation(v, o)
+}
 func (c *Client) DeleteSequenceItemOperation(k SequenceItemKey) (runtime.WriteItem, error) {
 	return c.sequenceItem.DeleteOperation(k)
 }
+func (c *Client) DeleteSequenceItemOperationWithOptions(k SequenceItemKey, o runtime.WriteOptions) (runtime.WriteItem, error) {
+	return c.sequenceItem.DeleteOperationWithOptions(k, o)
+}
 func (c *Client) UpdateSequenceItemOperation(k SequenceItemKey, p SequenceItemUpdate) (runtime.WriteItem, error) {
-	set := map[string]types.AttributeValue{}
-	remove := []string{}
-	if p.SetValue != nil {
-		av, _ := attributevalue.Marshal(*p.SetValue)
-		set["value"] = av
+	return c.UpdateSequenceItemOperationWithOptions(k, p, runtime.WriteOptions{})
+}
+func (c *Client) UpdateSequenceItemOperationWithOptions(k SequenceItemKey, p SequenceItemUpdate, o runtime.WriteOptions) (runtime.WriteItem, error) {
+	set, remove, err := encodeSequenceItemUpdate(p)
+	if err != nil {
+		return runtime.WriteItem{}, err
 	}
-	return c.sequenceItem.UpdateOperation(k, set, remove, "id")
+	return c.sequenceItem.UpdateOperationWithOptions(k, set, remove, o, "id")
 }
 
 func (c *Client) QuerySequenceItemByID(ctx context.Context, value int64, page runtime.PageRequest) (runtime.Page[SequenceItem], error) {
-	q := runtime.QueryRequest{IndexName: "", PartitionName: "id", PartitionValue: value, SortName: "", Page: page}
+	q := runtime.QueryRequest{IndexName: "", PartitionName: "id", PartitionValue: value, SortName: "", Page: page, GlobalIndex: false}
 	return c.sequenceItem.Query(ctx, q)
 }
 
@@ -587,7 +994,7 @@ func (c *Client) GetUserWithPosts(ctx context.Context, key UserKey, page runtime
 		return UserWithPosts{}, fmt.Errorf("dynamox: User not found")
 	}
 	result := UserWithPosts{User: value}
-	related, err := c.post.Query(ctx, runtime.QueryRequest{IndexName: "ByAuthor", PartitionName: "authorId", PartitionValue: value.ID, SortName: "createdAt", Page: page})
+	related, err := c.post.Query(ctx, runtime.QueryRequest{IndexName: "ByAuthor", PartitionName: "authorId", PartitionValue: value.ID, SortName: "createdAt", Page: page, GlobalIndex: true})
 	if err != nil {
 		return UserWithPosts{}, err
 	}

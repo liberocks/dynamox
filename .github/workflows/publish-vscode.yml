@@ -47,6 +47,10 @@ jobs:
         with:
           node-version: 22
 
+      - name: Install extension build dependencies
+        working-directory: vscode-dynamox
+        run: npm ci
+
       - name: Package VSIX
         working-directory: vscode-dynamox
         env:

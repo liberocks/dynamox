@@ -1,0 +1,7 @@
+model SourceRecord {
+  PK String @partitionKey
+  SK String @sortKey
+  status String
+  updatedAt DateTime
+  @@table(name: "source-records")
+}

@@ -2,7 +2,7 @@
 
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { byteColumnToUtf16 } = require("../positions");
+const { byteColumnToUtf16 } = require("../out/src/positions");
 
 test("maps ASCII diagnostic columns without adjustment", () => {
   assert.equal(byteColumnToUtf16("id String @id", 4), 3);

@@ -1,6 +1,4 @@
-"use strict";
-
-function byteColumnToUtf16(lineText, oneBasedByteColumn) {
+export function byteColumnToUtf16(lineText: string, oneBasedByteColumn: number): number {
   const targetByte = Math.max(0, oneBasedByteColumn - 1);
   let byteOffset = 0;
   let utf16Offset = 0;
@@ -11,5 +9,3 @@ function byteColumnToUtf16(lineText, oneBasedByteColumn) {
   }
   return utf16Offset;
 }
-
-module.exports = { byteColumnToUtf16 };
