@@ -190,6 +190,25 @@ err = client.TransactGet(ctx, readUser)
 err = client.TransactWrite(ctx, writePost)
 ```
 
-Generated CRUD methods include `Create<Model>`, `Get<Model>`, `Update<Model>`, `Delete<Model>`, and paginated `Scan<Model>`. `Create<Model>` returns the saved model and any generated key. Query methods are emitted only for the table primary key and declared indexes. Update inputs use `Set<Field>` pointers; optional fields also have `Clear<Field>` flags. Transaction helpers compose generated read and write operations with `TransactGet` and `TransactWrite`.
+### Generated types
 
-The module uses AWS SDK for Go v2. The caller supplies the SDK client, so region, credentials, retries, and endpoint configuration remain controlled by the application.
+The generated package contains one Go struct for each model and named Go types for schema `type` and `enum` blocks. Model scalar fields map to `string`, `int64`, `float64`, `bool`, `time.Time`, or `[]byte`; optional fields become pointers and list fields become slices. Custom types remain named structs, and enums are named string types with constants for their declared values.
+
+Relation declarations describe how generated relation loaders fetch related rows; relation fields are not stored on the model struct. For each model, dynamox also emits a `<Model>Key` struct containing its primary key fields and a `<Model>Update` struct containing typed `Set<Field>` values. Optional fields additionally have `Clear<Field>` flags, so an update can distinguish leaving a value unchanged from removing it. Primary-key fields are not update fields.
+
+Fields marked `@jsonString` use their declared Go type in the model while storing JSON text in DynamoDB. The generated encoder and decoder handle `encoding/json` conversion, including optional and list values. Invalid stored JSON returns an error identifying the model and field. DateTime fields use `time.Time` in Go and UTC RFC 3339 Nano strings in DynamoDB.
+
+### Generated client methods
+
+The generated `Client` wraps the AWS SDK for Go v2 DynamoDB client supplied to `NewClient`. `NewClientWithIDGenerator` is also generated for applications that want to provide their own ID generator; otherwise model defaults such as UUIDv7, ObjectID, or serial IDs are applied by `Create<Model>` when the key is omitted. The create method returns the saved model, including its generated key.
+
+For each model, the client exposes:
+
+- `Create<Model>`, `Get<Model>`, `Update<Model>`, and `Delete<Model>` for typed item operations. `Get<Model>` returns the model, a found flag, and an error.
+- `Scan<Model>` for an unfiltered, paginated table scan.
+- `Query<Model>By<PrimaryKey>` and `Query<Model>Using<Index>` only for the primary key and declared indexes. Each query requires partition-key equality; indexes with a sort key also get a typed sort-condition struct supporting `=`, `<`, `<=`, `>`, `>=`, and `begins_with`. Non-index fields intentionally have no query method.
+- `Read<Model>`, `Write<Model>`, `Update<Model>Operation`, and `Delete<Model>Operation` helpers for composing transactions.
+
+Queries and scans take `runtime.PageRequest` (`Limit`, `Cursor`, and scan direction) and return `runtime.Page[Model]` with `Items` and the next `Cursor`. Pass that cursor to the next request to fetch another page. Relation loaders such as `GetUserWithPosts` first read the model and then use the declared indexed path; to-many relations return a page and can therefore be paginated.
+
+`TransactGet` and `TransactWrite` accept the generated read/write operations and execute them through DynamoDB transactions. The application retains control over AWS region, credentials, retries, and endpoint configuration because it supplies the SDK client.
