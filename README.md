@@ -150,6 +150,23 @@ For an application using all generated CRUD, scan, query, relation, and transact
 
 Replace the placeholders and list each model table and queried index. Omit the index statement when there are no secondary-index queries, and omit the serial statement when there are no serial IDs. If the application uses only some generated operations, remove unused actions such as `Scan` or `DeleteItem`. DynamoDB authorizes transaction helper reads and writes through their underlying `GetItem`, `PutItem`, `UpdateItem`, and `DeleteItem` actions. See AWS's [table and index IAM examples](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/iam-policy-specific-table-indexes.html), [transaction authorization guide](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/transaction-apis-iam.html), and [DynamoDB service authorization reference](https://docs.aws.amazon.com/service-authorization/latest/reference/list_dynamodb.html).
 
+## Benchmarks
+
+CI runs the runtime benchmarks against [Moto](https://github.com/getmoto/moto), an open-source DynamoDB emulator, without AWS credentials or an AWS account. The benchmarks cover Get, Create, Update, secondary-index Query, and Scan. Their timings include Go, the AWS SDK, HTTP, and emulator overhead; they are useful for comparing changes in the same environment, not for estimating AWS service latency or throughput.
+
+To run them locally, install Moto and start its [standalone server](https://docs.getmoto.org/en/latest/docs/server_mode.html):
+
+```sh
+python3 -m pip install 'moto[server]==5.2.4'
+moto_server -H 127.0.0.1 -p 8000
+```
+
+In another terminal, run:
+
+```sh
+DYNAMODB_ENDPOINT=http://127.0.0.1:8000 go test -run '^$' -bench '^BenchmarkDynamoxRuntime$' -benchmem ./runtime
+```
+
 ## Generated client
 
 ```go
