@@ -83,15 +83,57 @@ jobs:
           cat "${RUNNER_TEMP}/moto.log"
           exit 1
 
-      - name: Run tests with coverage
-        run: go test -count=1 -coverprofile=coverage.out ./...
+      - name: Run complete Go test suite
+        run: go test -count=1 ./...
 
-      - name: Require 100% statement coverage
+      - name: Measure implementation package coverage
+        run: go test -count=1 -coverprofile=coverage.out ./runtime ./schema ./provision ./codegen ./cmd/...
+
+      - name: Require 100% implementation statement coverage
         shell: bash
         run: |
           coverage="$(go tool cover -func=coverage.out | awk '$1 == "total:" {print $3}')"
-          echo "Total statement coverage: ${coverage}"
+          echo "Implementation statement coverage: ${coverage}"
           test "${coverage}" = "100.0%"
 
       - name: Run emulator benchmarks
         run: go test -run '^$' -bench '^BenchmarkDynamox' -benchmem -count=1 ./runtime ./examples/blog/dynamoxgen
+
+  dynamodb-local-integration:
+    name: DynamoDB Local integration
+    runs-on: ubuntu-latest
+    services:
+      dynamodb:
+        image: amazon/dynamodb-local:latest
+        ports:
+          - 8000:8000
+    env:
+      DYNAMODB_LOCAL_ENDPOINT: http://127.0.0.1:8000
+      DYNAMODB_ENDPOINT: http://127.0.0.1:8000
+      AWS_ACCESS_KEY_ID: local
+      AWS_SECRET_ACCESS_KEY: local
+      AWS_REGION: us-east-1
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Wait for DynamoDB Local
+        shell: bash
+        run: |
+          for attempt in {1..30}; do
+            if curl --silent --output /dev/null http://127.0.0.1:8000/; then
+              echo "DynamoDB Local is listening on port 8000"
+              exit 0
+            fi
+            sleep 1
+          done
+          exit 1
+
+      - name: Run DynamoDB Local integration tests
+        run: go test -count=1 ./runtime ./provision ./examples/blog/dynamoxgen ./examples/overmost/transaction

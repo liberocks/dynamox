@@ -9,10 +9,21 @@ type Preferences {
   alternate ThemeOption?
 }
 
+type DocumentMetadata {
+  source String
+  provider Json
+  metadata Json?
+}
+
 model User {
   id String @id @default(uuidv7)
   name String
   preferences Preferences @jsonString
+  documentPreferences DocumentMetadata @document
+  optionalDocumentPreferences DocumentMetadata? @document
+  providerPayload Json
+  optionalPayload Json?
+  payloads Json[]
   settings Preferences @jsonString
   draftPreferences Preferences? @jsonString
   nickname String?

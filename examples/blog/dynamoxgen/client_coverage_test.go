@@ -599,3 +599,168 @@ func TestGeneratedClientRelationLoadingOutcomes(t *testing.T) {
 		t.Fatal("editor get error")
 	}
 }
+
+func TestGeneratedAdditiveOptionMethodsAndOperations(t *testing.T) {
+	ctx := context.Background()
+	d := newGeneratedDynamo()
+	client := NewClient(d)
+	u := generatedUser(t, "options-user")
+	p := generatedPost(t, "options-post", u["id"].(*types.AttributeValueMemberS).Value, nil)
+	setGeneratedRecord(t, d, "users", "options-user", u)
+	setGeneratedRecord(t, d, "posts", "options-post", p)
+	d.scanItems["users"] = []map[string]types.AttributeValue{u}
+	d.scanItems["posts"] = []map[string]types.AttributeValue{p}
+	d.scanItems["sequence_items"] = []map[string]types.AttributeValue{generatedSequenceItem(t, 7)}
+	setGeneratedRecord(t, d, "sequence_items", "7", generatedSequenceItem(t, 7))
+	d.queryItems["posts"] = []map[string]types.AttributeValue{p}
+	condition := runtime.WriteOptions{Condition: &runtime.Expression{Text: "#status = :status", Names: map[string]string{"#status": "status"}, Values: map[string]any{":status": "draft"}}}
+
+	if err := client.PutUser(ctx, User{ID: "put-user"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.PutUser(ctx, User{ID: "put-user", Name: "Ada"}, condition); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := client.GetUserWithOptions(ctx, UserKey{ID: "options-user"}, runtime.ReadOptions{ConsistentRead: true}); err != nil || !found {
+		t.Fatalf("GetUserWithOptions found=%v err=%v", found, err)
+	}
+	if err := client.DeleteUserWithOptions(ctx, UserKey{ID: "options-user"}, condition); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.ScanUserWithOptions(ctx, runtime.ScanOptions{Page: runtime.PageRequest{Limit: 3}, Filter: condition.Condition}); err != nil {
+		t.Fatal(err)
+	}
+	nickname := "Countess"
+	userPatch := UserUpdate{SetNickname: &nickname}
+	if err := client.UpdateUserWithOptions(ctx, UserKey{ID: "options-user"}, userPatch, condition); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.UpdateUserReturning(ctx, UserKey{ID: "options-user"}, userPatch, condition); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.WriteUserWithOptions(User{ID: "write-user"}, condition); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.CreateUserOperation(User{ID: "create-user"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.CreateUserOperation(User{ID: "create-user"}, condition); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.DeleteUserOperationWithOptions(UserKey{ID: "delete-user"}, condition); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.UpdateUserOperationWithOptions(UserKey{ID: "options-user"}, userPatch, condition); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := client.PutPost(ctx, Post{ID: "put-post", AuthorID: "options-user"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.PutPost(ctx, Post{ID: "put-post", AuthorID: "options-user"}, condition); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := client.GetPostWithOptions(ctx, PostKey{ID: "options-post"}, runtime.ReadOptions{ConsistentRead: true}); err != nil || !found {
+		t.Fatalf("GetPostWithOptions found=%v err=%v", found, err)
+	}
+	if err := client.DeletePostWithOptions(ctx, PostKey{ID: "options-post"}, condition); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.ScanPostWithOptions(ctx, runtime.ScanOptions{Page: runtime.PageRequest{Limit: 3}, Filter: condition.Condition}); err != nil {
+		t.Fatal(err)
+	}
+	postPatch := PostUpdate{SetTitle: svalue("updated")}
+	if err := client.UpdatePostWithOptions(ctx, PostKey{ID: "options-post"}, postPatch, condition); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.UpdatePostReturning(ctx, PostKey{ID: "options-post"}, postPatch, condition); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.WritePostWithOptions(Post{ID: "write-post"}, condition); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.CreatePostOperation(Post{ID: "create-post"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.CreatePostOperation(Post{ID: "create-post"}, condition); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.DeletePostOperationWithOptions(PostKey{ID: "delete-post"}, condition); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.UpdatePostOperationWithOptions(PostKey{ID: "options-post"}, postPatch, condition); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := client.PutSequenceItem(ctx, SequenceItem{ID: 7, Value: "seven"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.PutSequenceItem(ctx, SequenceItem{ID: 7, Value: "seven"}, condition); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := client.GetSequenceItemWithOptions(ctx, SequenceItemKey{ID: 7}, runtime.ReadOptions{ConsistentRead: true}); err != nil || !found {
+		t.Fatalf("GetSequenceItemWithOptions found=%v err=%v", found, err)
+	}
+	if err := client.DeleteSequenceItemWithOptions(ctx, SequenceItemKey{ID: 7}, condition); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.ScanSequenceItemWithOptions(ctx, runtime.ScanOptions{Page: runtime.PageRequest{Limit: 3}, Filter: condition.Condition}); err != nil {
+		t.Fatal(err)
+	}
+	sequencePatch := SequenceItemUpdate{SetValue: svalue("seven-updated")}
+	if err := client.UpdateSequenceItemWithOptions(ctx, SequenceItemKey{ID: 7}, sequencePatch, condition); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.UpdateSequenceItemReturning(ctx, SequenceItemKey{ID: 7}, sequencePatch, condition); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.WriteSequenceItemWithOptions(SequenceItem{ID: 8}, condition); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.CreateSequenceItemOperation(SequenceItem{ID: 9}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.CreateSequenceItemOperation(SequenceItem{ID: 9}, condition); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.DeleteSequenceItemOperationWithOptions(SequenceItemKey{ID: 7}, condition); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.UpdateSequenceItemOperationWithOptions(SequenceItemKey{ID: 7}, sequencePatch, condition); err != nil {
+		t.Fatal(err)
+	}
+
+	d.updateErr = errors.New("update failed")
+	if _, err := client.UpdatePostReturning(ctx, PostKey{ID: "options-post"}, postPatch); err == nil {
+		t.Fatal("UpdatePostReturning should return the runtime error")
+	}
+}
+
+func TestGeneratedNativeCompositeCodecFailurePaths(t *testing.T) {
+	value := ThemeOption{Value: "dark"}
+	encoded, err := attributevalue.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded ThemeOption
+	if err := attributevalue.Unmarshal(encoded, &decoded); err != nil || decoded.Value != value.Value {
+		t.Fatalf("ThemeOption codec: %#v %v", decoded, err)
+	}
+	doc := DocumentMetadata{Source: "test", Provider: runtime.JSON(map[string]any{"ok": true})}
+	encodedDoc, err := attributevalue.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decodedDoc DocumentMetadata
+	if err := attributevalue.Unmarshal(encodedDoc, &decodedDoc); err != nil || decodedDoc.Source != doc.Source {
+		t.Fatalf("DocumentMetadata codec: %#v %v", decodedDoc, err)
+	}
+	if _, err := attributevalue.Marshal(DocumentMetadata{Provider: runtime.JSON(make(chan int))}); err == nil {
+		t.Fatal("expected nested Json encode failure")
+	}
+	if err := decodedDoc.UnmarshalDynamoDBAttributeValue(&types.AttributeValueMemberM{Value: map[string]types.AttributeValue{
+		"source": &types.AttributeValueMemberS{Value: "bad-json"}, "provider": &types.AttributeValueMemberM{Value: map[string]types.AttributeValue{"nested": nil}},
+	}}); err == nil {
+		t.Fatal("expected nested Json decode failure")
+	}
+}

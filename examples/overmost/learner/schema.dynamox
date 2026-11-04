@@ -1,0 +1,14 @@
+type Section {
+  id String
+  prompt String
+  choices String[]
+}
+
+model Content {
+  PK String @partitionKey
+  SK String @sortKey
+  status String
+  sections Section[] @document
+  providerPayload Json
+  @@table(name: "learner-content")
+}

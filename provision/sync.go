@@ -44,6 +44,11 @@ type Table struct {
 
 // Sync creates missing tables and reconciles capacity and TTL on structurally matching tables.
 func Sync(ctx context.Context, db API, tables []Table) ([]string, error) {
+	var err error
+	tables, err = mergeTables(tables)
+	if err != nil {
+		return nil, err
+	}
 	created := []string{}
 	pending := []string{}
 	for _, want := range tables {
@@ -94,6 +99,57 @@ func Sync(ctx context.Context, db API, tables []Table) ([]string, error) {
 		return created, fmt.Errorf("%s", strings.Join(pending, "; "))
 	}
 	return created, nil
+}
+
+func mergeTables(tables []Table) ([]Table, error) {
+	byName := map[string]Table{}
+	for _, t := range tables {
+		old, ok := byName[t.Name]
+		if !ok {
+			byName[t.Name] = t
+			continue
+		}
+		if old.Partition.Name != t.Partition.Name || old.Partition.Type != t.Partition.Type || old.Sort.Name != t.Sort.Name || old.Sort.Type != t.Sort.Type {
+			return nil, fmt.Errorf("table %s has conflicting primary key declarations", t.Name)
+		}
+		if old.ReadCapacityUnits != t.ReadCapacityUnits || old.WriteCapacityUnits != t.WriteCapacityUnits {
+			return nil, fmt.Errorf("table %s has conflicting capacity declarations", t.Name)
+		}
+		if old.TTL != "" && t.TTL != "" && old.TTL != t.TTL {
+			return nil, fmt.Errorf("table %s has conflicting TTL declarations", t.Name)
+		}
+		if old.TTL == "" {
+			old.TTL = t.TTL
+		}
+		indexes := map[string]Index{}
+		for _, ix := range old.Indexes {
+			indexes[ix.Name] = ix
+		}
+		for _, ix := range t.Indexes {
+			if prev, exists := indexes[ix.Name]; exists {
+				if !sameIndex(prev, ix) {
+					return nil, fmt.Errorf("table %s has conflicting index %s declarations", t.Name, ix.Name)
+				}
+			} else {
+				indexes[ix.Name] = ix
+			}
+		}
+		old.Indexes = make([]Index, 0, len(indexes))
+		for _, ix := range indexes {
+			old.Indexes = append(old.Indexes, ix)
+		}
+		sort.Slice(old.Indexes, func(i, j int) bool { return old.Indexes[i].Name < old.Indexes[j].Name })
+		byName[t.Name] = old
+	}
+	out := make([]Table, 0, len(byName))
+	for _, t := range byName {
+		out = append(out, t)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+func sameIndex(a, b Index) bool {
+	return a.Name == b.Name && a.Partition.Name == b.Partition.Name && a.Partition.Type == b.Partition.Type && a.Sort.Name == b.Sort.Name && a.Sort.Type == b.Sort.Type && a.Local == b.Local && a.ReadCapacityUnits == b.ReadCapacityUnits && a.WriteCapacityUnits == b.WriteCapacityUnits
 }
 func create(ctx context.Context, db API, t Table) error {
 	attrs := map[string]types.ScalarAttributeType{}

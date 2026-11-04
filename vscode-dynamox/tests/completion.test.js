@@ -16,8 +16,16 @@ test("suggests scalar and named types for model fields", () => {
   const text = "type Metadata {\n  label String\n}\nenum Status { READY }\nmodel User {\n  profile ";
   const suggestions = labels(text);
   assert.ok(suggestions.includes("String"));
+  assert.ok(suggestions.includes("Json"));
   assert.ok(suggestions.includes("Metadata"));
   assert.ok(suggestions.includes("Status"));
+});
+
+test("suggests native document storage for named types", () => {
+  const text = "type Metadata {\n label String\n}\nmodel User {\n profile Metadata @";
+  assert.ok(labels(text).includes("@document"));
+  const nested = "type Child {\n value String\n}\ntype Parent {\n child Child @";
+  assert.ok(labels(nested).includes("@document"));
 });
 
 test("inserts relation syntax when completing a model type", () => {
@@ -83,7 +91,7 @@ test("suggests field attributes and relation arguments", () => {
   const relationAttributeSuggestions = labels("model User {\n id String @id\n user User @");
   assert.deepEqual(relationAttributeSuggestions, ["@relation"]);
   const jsonAttributeSuggestions = labels("type Preferences {\n name String\n}\nmodel User {\n id String @id\n preferences Preferences @");
-  assert.deepEqual(jsonAttributeSuggestions, ["@jsonString"]);
+  assert.deepEqual(jsonAttributeSuggestions, ["@jsonString", "@document"]);
   const relationArguments = labels("model User {\n id String @id\n user User @relation(");
   assert.ok(relationArguments.includes("fields:"));
   assert.ok(relationArguments.includes("references:"));

@@ -37,7 +37,7 @@ func TestValidateDeclarationsNamesAndEmptySchema(t *testing.T) {
 	second.Fields[2].Pos = Position{Line: 6, Column: 2}
 	second.Fields[3].Pos = Position{Line: 7, Column: 2}
 	second.Indexes = []Index{{Name: "first", Partition: "id", Kind: "TABLE", Pos: Position{Line: 8, Column: 1}}, {Name: "second", Partition: "id", Kind: "TABLE", Pos: Position{Line: 9, Column: 1}}}
-	s := &Schema{Models: []Model{first, second, testModel("Thing", "shared", "id", testField("id", "String"))}, Types: []Composite{
+	s := &Schema{Models: []Model{first, second, testModel("Thing", "shared", "differentId", testField("differentId", "String"))}, Types: []Composite{
 		{Name: "Client", Pos: Position{Line: 10, Column: 1}},
 		{Name: "Payload", Pos: Position{Line: 11, Column: 1}},
 		{Name: "Payload", Pos: Position{Line: 12, Column: 1}},
@@ -51,7 +51,7 @@ func TestValidateDeclarationsNamesAndEmptySchema(t *testing.T) {
 	}}
 	ds := Validate(s)
 	joined := diagnosticMessages(ds)
-	for _, want := range []string{"duplicate model Client", "type name conflicts with model Client", "enum name conflicts with model Client", "type name conflicts with enum Payload", "duplicate type Payload", "duplicate enum Status", "duplicate enum value DONE", "enum must contain at least one value", "generated Go name", "model must declare @@table", "table \"shared\" is already assigned", "fields \"fooBar\" and \"foo_bar\" map to the same Go name", "indexes generate duplicate method", "duplicate field id", "fields \"xY\" and \"x_y\" map to the same Go name"} {
+	for _, want := range []string{"duplicate model Client", "type name conflicts with model Client", "enum name conflicts with model Client", "type name conflicts with enum Payload", "duplicate type Payload", "duplicate enum Status", "duplicate enum value DONE", "enum must contain at least one value", "generated Go name", "model must declare @@table", "table \"shared\" conflicts with model", "fields \"fooBar\" and \"foo_bar\" map to the same Go name", "indexes generate duplicate method", "duplicate field id", "fields \"xY\" and \"x_y\" map to the same Go name"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("missing %q in diagnostics:\n%s", want, joined)
 		}
@@ -108,7 +108,7 @@ func TestValidateFieldsIndexesAndKeys(t *testing.T) {
 	s := &Schema{Models: []Model{m, noSort, noPartition, unknownKey}, Types: []Composite{{Name: "Payload"}}, Enums: []Enum{{Name: "KeyEnum", Values: []string{"one"}}}}
 	ds := Validate(s)
 	joined := diagnosticMessages(ds)
-	for _, want := range []string{"model must declare @@table", "model must declare one @partitionKey", "only one partition key", "only one sort key", "partition key references unknown field missing", "sort key references unknown field missingSort", "partition key must be a required", "sort key must be a required", "duplicate field dup", "partition key cannot be optional", "sort key cannot be optional", "@jsonString requires a named type or enum", "composite field composite must use @jsonString", "unknown field type Unknown", "field type is required", "relation target must be a model", "relation fields cannot have @wrong", "unknown @relation argument bad", "unknown field attribute @unknown", "index name is required", "GSI requires a partition field", "index type must be GSI or LSI", "LSI requires a sort field", "LSI requires a table sort key", "LSI partition must match", "index references unknown partition field missing", "index references unknown sort field missingSort", "index partition field must be a required", "index sort field must be a required", "duplicate index name duplicate"} {
+	for _, want := range []string{"model must declare @@table", "model must declare one @partitionKey", "only one partition key", "only one sort key", "partition key references unknown field missing", "sort key references unknown field missingSort", "partition key must be a required", "sort key must be a required", "duplicate field dup", "partition key cannot be optional", "sort key cannot be optional", "@jsonString requires a named type or enum", "composite field composite must use exactly one", "unknown field type Unknown", "field type is required", "relation target must be a model", "relation fields cannot have @wrong", "unknown @relation argument bad", "unknown field attribute @unknown", "index name is required", "GSI requires a partition field", "index type must be GSI or LSI", "LSI requires a sort field", "LSI requires a table sort key", "LSI partition must match", "index references unknown partition field missing", "index references unknown sort field missingSort", "index partition field must be a required", "index sort field must be a required", "duplicate index name duplicate"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("missing %q in diagnostics:\n%s", want, joined)
 		}
@@ -152,7 +152,7 @@ func TestValidateRelationsCompositeFieldsAndCycles(t *testing.T) {
 	s := &Schema{Models: []Model{target, source}, Types: types, Enums: []Enum{{Name: "State", Values: []string{"ON"}}}}
 	ds := Validate(s)
 	joined := diagnosticMessages(ds)
-	for _, want := range []string{"unknown relation model Missing", "@relation requires fields", "to-many relation fields cannot be optional", "v1 relations support one local and one referenced field", "relation fields references unknown local field", "relation references unknown target field", "to-one relation optionality must match", "relation local and referenced fields must have the same type", "needs a target index partitioned by ownerId", "to-one relation Source.wrongRemote must reference target partition key id", "to-one relation to a composite primary key is not supported", "duplicate field dup", "unknown JSON field type NotKnown", "attributes are not supported on JSON type fields", "recursive JSON types must use an optional or list field"} {
+	for _, want := range []string{"unknown relation model Missing", "@relation requires fields", "to-many relation fields cannot be optional", "v1 relations support one local and one referenced field", "relation fields references unknown local field", "relation references unknown target field", "to-one relation optionality must match", "relation local and referenced fields must have the same type", "needs a target index partitioned by ownerId", "to-one relation Source.wrongRemote must reference target partition key id", "to-one relation to a composite primary key is not supported", "duplicate field dup", "unknown JSON field type NotKnown", "only nested composite fields may use @document", "recursive JSON types must use an optional or list field"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("missing %q in diagnostics:\n%s", want, joined)
 		}
@@ -203,3 +203,136 @@ model SerialTable { id Int @id @default(serial) @@table(name: "dynamox_sequences
 		}
 	}
 }
+
+func TestSharedTablesAndDocumentFields(t *testing.T) {
+	src := `type Section { title String payload Json }
+model AdminDraft { id String @id email String @@table(name: "shared") @@index(name: "ByEmail", partition: email) }
+model LearnerItem { id String @id createdAt DateTime @@table(name: "shared") @@index(name: "ByCreated", partition: createdAt) }
+model Quiz { id String @id sections Section[] @document snapshot Json oldSnapshot Section @jsonString @@table(name: "quizzes") }`
+	s, err := Parse(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ds := Validate(s); len(ds) != 0 {
+		t.Fatalf("compatible shared tables and document declarations rejected: %v", ds)
+	}
+	bad := *s
+	bad.Models = append([]Model(nil), s.Models...)
+	bad.Models[1].Partition = "createdAt"
+	bad.Models[1].Sort = ""
+	if got := diagnosticMessages(Validate(&bad)); !strings.Contains(got, "primary partition keys differ") {
+		t.Fatalf("incompatible shared table accepted: %s", got)
+	}
+	bad = *s
+	bad.Models = append([]Model(nil), s.Models...)
+	bad.Models[1].Indexes = append([]Index(nil), s.Models[1].Indexes...)
+	bad.Models[1].Indexes[0] = Index{Name: "ByEmail", Partition: "createdAt", Kind: "GSI"}
+	if got := diagnosticMessages(Validate(&bad)); !strings.Contains(got, "index ByEmail declarations differ") {
+		t.Fatalf("conflicting shared index accepted: %s", got)
+	}
+}
+
+func TestSharedTableConflictValidationBranches(t *testing.T) {
+	s := &Schema{Enums: []Enum{{Name: "State"}}}
+	shared := func(keyType string) (Model, Model) {
+		return Model{Name: "A", Partition: "id", Fields: []Field{{Name: "id", Type: keyType}}},
+			Model{Name: "B", Partition: "id", Fields: []Field{{Name: "id", Type: keyType}}}
+	}
+	for _, typ := range []string{"Int", "Float", "Bytes", "String", "DateTime", "State", "Custom", "Boolean"} {
+		a, b := shared(typ)
+		if conflict := sharedTableConflict(a, b, s); conflict != "" {
+			t.Errorf("same %s key type should be physically compatible, got %q", typ, conflict)
+		}
+	}
+	a, b := shared("String")
+	b.Fields = nil
+	if conflict := sharedTableConflict(a, b, s); conflict != "primary partition keys differ" {
+		t.Fatalf("missing key field conflict = %q", conflict)
+	}
+	a, b = shared("String")
+	a.Sort = "sk"
+	if conflict := sharedTableConflict(a, b, s); conflict != "primary sort keys differ" {
+		t.Fatalf("sort key declaration conflict = %q", conflict)
+	}
+	a, b = shared("String")
+	a.ReadCapacityUnits, a.WriteCapacityUnits = int64Pointer(2), int64Pointer(1)
+	b.ReadCapacityUnits, b.WriteCapacityUnits = int64Pointer(2), int64Pointer(1)
+	if conflict := sharedTableConflict(a, b, s); conflict != "" {
+		t.Fatalf("matching capacity declarations conflict: %q", conflict)
+	}
+	b.WriteCapacityUnits = int64Pointer(3)
+	if conflict := sharedTableConflict(a, b, s); conflict != "table capacity declarations differ" {
+		t.Fatalf("capacity conflict = %q", conflict)
+	}
+	a, b = shared("String")
+	a.TTL, b.TTL = "expiresAt", "deleteAt"
+	if conflict := sharedTableConflict(a, b, s); conflict != "TTL attributes differ" {
+		t.Fatalf("TTL conflict = %q", conflict)
+	}
+	a, b = shared("String")
+	a.Indexes = []Index{{Name: "ByEmail", Partition: "email"}}
+	b.Indexes = []Index{{Name: "ByEmail", Partition: "email", Kind: "GSI"}}
+	if conflict := sharedTableConflict(a, b, s); conflict != "" {
+		t.Fatalf("same default and explicit GSI declaration conflict: %q", conflict)
+	}
+	b.Indexes[0].WriteCapacityUnits = int64Pointer(1)
+	if conflict := sharedTableConflict(a, b, s); conflict != "index ByEmail declarations differ" {
+		t.Fatalf("index capacity conflict = %q", conflict)
+	}
+	a, b = shared("String")
+	a.Fields = append(a.Fields, Field{Name: "email", Type: "String"})
+	b.Fields = append(b.Fields, Field{Name: "email", Type: "Int"})
+	a.Indexes = []Index{{Name: "ByA", Partition: "email"}}
+	b.Indexes = []Index{{Name: "ByB", Partition: "email"}}
+	if conflict := sharedTableConflict(a, b, s); !strings.Contains(conflict, "index ByA key attribute email") {
+		t.Fatalf("first client's secondary key type conflict = %q", conflict)
+	}
+	if conflict := sharedTableConflict(b, a, s); !strings.Contains(conflict, "index ByB key attribute email") {
+		t.Fatalf("second client's secondary key type conflict = %q", conflict)
+	}
+	indexOnlyOnSecond := Model{Name: "C", Partition: "id", Fields: []Field{{Name: "id", Type: "String"}, {Name: "email", Type: "Int"}}, Indexes: []Index{{Name: "ByEmail", Partition: "email"}}}
+	fieldOnlyOnFirst := Model{Name: "D", Partition: "id", Fields: []Field{{Name: "id", Type: "String"}, {Name: "email", Type: "String"}}}
+	if conflict := sharedTableConflict(fieldOnlyOnFirst, indexOnlyOnSecond, s); !strings.Contains(conflict, "index ByEmail key attribute email") {
+		t.Fatalf("index declared only on second client type conflict = %q", conflict)
+	}
+}
+
+func TestSharedTableConflictValidationComparesEveryPriorModel(t *testing.T) {
+	indexSchema, err := Parse(`model First { id String @id @@table(name: "shared") }
+model Second { id String @id email String @@table(name: "shared") @@index(name: "ByEmail", partition: email) }
+model Third { id String @id ownerId String @@table(name: "shared") @@index(name: "ByEmail", partition: ownerId) }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := diagnosticMessages(Validate(indexSchema)); !strings.Contains(got, "conflicts with model Second: index ByEmail declarations differ") {
+		t.Fatalf("index conflict between later shared models was missed: %s", got)
+	}
+
+	ttlSchema, err := Parse(`model First { id String @id @@table(name: "shared") }
+model Second { id String @id expiresAt Int @@table(name: "shared") @@ttl(field: expiresAt) }
+model Third { id String @id deletedAt Int @@table(name: "shared") @@ttl(field: deletedAt) }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := diagnosticMessages(Validate(ttlSchema)); !strings.Contains(got, "conflicts with model Second: TTL attributes differ") {
+		t.Fatalf("TTL conflict between later shared models was missed: %s", got)
+	}
+}
+
+func TestDocumentScalarEnumAndRecursiveValidation(t *testing.T) {
+	src := `type Node { child Node? }
+enum State { READY }
+model Invalid { id String @id raw Json @jsonString text String @document legacy String @jsonString state State @document node Node @document @@table(name: "invalid") }`
+	s, err := Parse(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	diagnostics := diagnosticMessages(Validate(s))
+	for _, want := range []string{"Json fields do not use @jsonString or @document", "@document requires a named type", "@jsonString requires a named type or enum", "enum fields cannot use @document or @jsonString", "@document cannot contain recursive named types"} {
+		if !strings.Contains(diagnostics, want) {
+			t.Errorf("missing %q in diagnostics: %s", want, diagnostics)
+		}
+	}
+}
+
+func int64Pointer(value int64) *int64 { return &value }

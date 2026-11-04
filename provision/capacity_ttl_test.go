@@ -286,6 +286,15 @@ func TestSyncUpdateAndRefreshFailures(t *testing.T) {
 	if err := reconcileCapacity(context.Background(), &statefulAPI{table: local}, Table{Name: "items", Partition: Key{Name: "id", Type: types.ScalarAttributeTypeS}, ReadCapacityUnits: 1, WriteCapacityUnits: 1, Indexes: []Index{{Name: "ByLocal", Local: true}}}, local); err != nil {
 		t.Fatalf("LSI should inherit table capacity: %v", err)
 	}
+	onDemand := &types.TableDescription{TableName: aws.String("items"), TableStatus: types.TableStatusActive, KeySchema: []types.KeySchemaElement{{AttributeName: aws.String("id"), KeyType: types.KeyTypeHash}}, AttributeDefinitions: []types.AttributeDefinition{{AttributeName: aws.String("id"), AttributeType: types.ScalarAttributeTypeS}}, BillingModeSummary: &types.BillingModeSummary{BillingMode: types.BillingModePayPerRequest}}
+	localModeSwitch := &statefulAPI{table: onDemand}
+	wantWithLSI := Table{Name: "items", Partition: Key{Name: "id", Type: types.ScalarAttributeTypeS}, ReadCapacityUnits: 1, WriteCapacityUnits: 1, Indexes: []Index{{Name: "ByLocal", Local: true}}}
+	if err := reconcileCapacity(context.Background(), localModeSwitch, wantWithLSI, onDemand); err != nil {
+		t.Fatalf("on-demand to provisioned switch with LSI failed: %v", err)
+	}
+	if len(localModeSwitch.tableUpdates) != 1 || len(localModeSwitch.tableUpdates[0].GlobalSecondaryIndexUpdates) != 0 {
+		t.Fatalf("LSIs must not receive GSI capacity updates: %#v", localModeSwitch.tableUpdates)
+	}
 }
 
 func TestReconcileGSIUpdateErrorsAndBillingFallback(t *testing.T) {

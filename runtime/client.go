@@ -34,6 +34,19 @@ type Codec[T any] struct {
 	Encode func(T) (map[string]types.AttributeValue, error)
 	Decode func(map[string]types.AttributeValue) (T, error)
 }
+type JSON any
+type ClientOptions struct {
+	TableNames  map[string]string
+	IDGenerator IDGenerator
+}
+
+func (o ClientOptions) TableName(schemaName string) string {
+	if name := o.TableNames[schemaName]; name != "" {
+		return name
+	}
+	return schemaName
+}
+
 type Table[T any, K any] struct {
 	DB            DynamoAPI
 	Name          string
@@ -42,10 +55,22 @@ type Table[T any, K any] struct {
 	Codec         Codec[T]
 	Key           func(K) (map[string]types.AttributeValue, error)
 }
+type Expression struct {
+	Text   string
+	Names  map[string]string
+	Values map[string]any
+}
+type ReadOptions struct{ ConsistentRead bool }
+type WriteOptions struct{ Condition *Expression }
+type ScanOptions struct {
+	Page   PageRequest
+	Filter *Expression
+}
 type PageRequest struct {
-	Limit   int32
-	Cursor  map[string]types.AttributeValue
-	Forward *bool
+	Limit          int32
+	Cursor         map[string]types.AttributeValue
+	Forward        *bool
+	ConsistentRead bool
 }
 type Page[T any] struct {
 	Items  []T
@@ -72,15 +97,19 @@ type QueryRequest struct {
 	SortName                 string
 	Sort                     *Condition
 	Page                     PageRequest
+	GlobalIndex              bool
 }
 
 func (t Table[T, K]) Get(ctx context.Context, key K) (T, bool, error) {
+	return t.GetWithOptions(ctx, key, ReadOptions{})
+}
+func (t Table[T, K]) GetWithOptions(ctx context.Context, key K, options ReadOptions) (T, bool, error) {
 	var zero T
 	k, err := t.Key(key)
 	if err != nil {
 		return zero, false, err
 	}
-	out, err := t.DB.GetItem(ctx, &dynamodb.GetItemInput{TableName: aws.String(t.Name), Key: k})
+	out, err := t.DB.GetItem(ctx, &dynamodb.GetItemInput{TableName: aws.String(t.Name), Key: k, ConsistentRead: aws.Bool(options.ConsistentRead)})
 	if err != nil {
 		return zero, false, err
 	}
@@ -91,6 +120,9 @@ func (t Table[T, K]) Get(ctx context.Context, key K) (T, bool, error) {
 	return v, true, err
 }
 func (t Table[T, K]) Create(ctx context.Context, v T) error {
+	return t.CreateWithOptions(ctx, v, WriteOptions{})
+}
+func (t Table[T, K]) CreateWithOptions(ctx context.Context, v T, options WriteOptions) error {
 	item, err := t.Codec.Encode(v)
 	if err != nil {
 		return err
@@ -101,66 +133,117 @@ func (t Table[T, K]) Create(ctx context.Context, v T) error {
 		keyField = "#sk"
 		keyName = t.SortName
 	}
-	_, err = t.DB.PutItem(ctx, &dynamodb.PutItemInput{TableName: aws.String(t.Name), Item: item, ConditionExpression: aws.String("attribute_not_exists(" + keyField + ")"), ExpressionAttributeNames: map[string]string{keyField: keyName}})
+	names, values, condition, err := expressionMaps(options.Condition)
+	if err != nil {
+		return err
+	}
+	keyField = uniquePlaceholder(names, keyField)
+	names[keyField] = keyName
+	condition = "attribute_not_exists(" + keyField + ")" + conditionSuffix(condition)
+	_, err = t.DB.PutItem(ctx, &dynamodb.PutItemInput{TableName: aws.String(t.Name), Item: item, ConditionExpression: aws.String(condition), ExpressionAttributeNames: names, ExpressionAttributeValues: values})
+	return err
+}
+func (t Table[T, K]) Put(ctx context.Context, v T, options ...WriteOptions) error {
+	item, err := t.Codec.Encode(v)
+	if err != nil {
+		return err
+	}
+	var opt WriteOptions
+	if len(options) > 0 {
+		opt = options[0]
+	}
+	names, values, _, err := expressionMaps(opt.Condition)
+	if err != nil {
+		return err
+	}
+	in := &dynamodb.PutItemInput{TableName: aws.String(t.Name), Item: item, ExpressionAttributeNames: nonEmptyNames(names), ExpressionAttributeValues: values}
+	setCondition(&in.ConditionExpression, opt.Condition)
+	_, err = t.DB.PutItem(ctx, in)
 	return err
 }
 func (t Table[T, K]) Delete(ctx context.Context, key K) error {
+	return t.DeleteWithOptions(ctx, key, WriteOptions{})
+}
+func (t Table[T, K]) DeleteWithOptions(ctx context.Context, key K, options WriteOptions) error {
 	k, err := t.Key(key)
 	if err != nil {
 		return err
 	}
-	_, err = t.DB.DeleteItem(ctx, &dynamodb.DeleteItemInput{TableName: aws.String(t.Name), Key: k})
+	names, values, _, err := expressionMaps(options.Condition)
+	if err != nil {
+		return err
+	}
+	in := &dynamodb.DeleteItemInput{TableName: aws.String(t.Name), Key: k, ExpressionAttributeNames: nonEmptyNames(names), ExpressionAttributeValues: values}
+	setCondition(&in.ConditionExpression, options.Condition)
+	_, err = t.DB.DeleteItem(ctx, in)
 	return err
 }
 
 // Update writes only supplied attributes and rejects an empty update or key mutation.
 func (t Table[T, K]) Update(ctx context.Context, key K, set map[string]types.AttributeValue, remove []string, keyNames ...string) error {
+	return t.UpdateWithOptions(ctx, key, set, remove, WriteOptions{}, keyNames...)
+}
+func (t Table[T, K]) UpdateWithOptions(ctx context.Context, key K, set map[string]types.AttributeValue, remove []string, options WriteOptions, keyNames ...string) error {
+	_, err := t.update(ctx, key, set, remove, options, types.ReturnValueNone, keyNames...)
+	return err
+}
+func (t Table[T, K]) UpdateReturning(ctx context.Context, key K, set map[string]types.AttributeValue, remove []string, options WriteOptions, keyNames ...string) (T, error) {
+	return t.update(ctx, key, set, remove, options, types.ReturnValueAllNew, keyNames...)
+}
+func (t Table[T, K]) update(ctx context.Context, key K, set map[string]types.AttributeValue, remove []string, options WriteOptions, returnValues types.ReturnValue, keyNames ...string) (T, error) {
+	var zero T
 	if len(set) == 0 && len(remove) == 0 {
-		return errors.New("dynamox: update has no fields")
+		return zero, errors.New("dynamox: update has no fields")
 	}
 	for i, name := range remove {
 		if _, ok := set[name]; ok {
-			return fmt.Errorf("dynamox: update field %q cannot be both set and removed", name)
+			return zero, fmt.Errorf("dynamox: update field %q cannot be both set and removed", name)
 		}
 		for _, other := range remove[:i] {
 			if other == name {
-				return fmt.Errorf("dynamox: update field %q is removed more than once", name)
+				return zero, fmt.Errorf("dynamox: update field %q is removed more than once", name)
 			}
 		}
 	}
 	k, err := t.Key(key)
 	if err != nil {
-		return err
+		return zero, err
 	}
 	for _, name := range keyNames {
 		if _, ok := set[name]; ok {
-			return fmt.Errorf("dynamox: key field %q cannot be updated", name)
+			return zero, fmt.Errorf("dynamox: key field %q cannot be updated", name)
 		}
 		for _, r := range remove {
 			if r == name {
-				return fmt.Errorf("dynamox: key field %q cannot be updated", name)
+				return zero, fmt.Errorf("dynamox: key field %q cannot be updated", name)
 			}
 		}
 	}
 	var clauses []string
-	names := map[string]string{}
-	values := map[string]types.AttributeValue{}
+	names, values, _, err := expressionMaps(options.Condition)
+	if err != nil {
+		return zero, err
+	}
+	if values == nil {
+		values = map[string]types.AttributeValue{}
+	}
+	valueFields := map[string]types.AttributeValue{}
 	i := 0
 	for _, name := range sortedKeys(set) {
 		val := set[name]
 		if val == nil {
-			return fmt.Errorf("dynamox: update field %q has nil value", name)
+			return zero, fmt.Errorf("dynamox: update field %q has nil value", name)
 		}
-		n := fmt.Sprintf("#f%d", i)
-		v := fmt.Sprintf(":v%d", i)
+		n := uniquePlaceholder(names, fmt.Sprintf("#dx_f%d", i))
+		v := uniquePlaceholderAV(values, fmt.Sprintf(":dx_v%d", i))
 		names[n] = name
-		values[v] = val
+		valueFields[v] = val
 		clauses = append(clauses, n+" = "+v)
 		i++
 	}
 	var removeNames []string
 	for _, name := range remove {
-		n := fmt.Sprintf("#f%d", i)
+		n := uniquePlaceholder(names, fmt.Sprintf("#dx_f%d", i))
 		i++
 		names[n] = name
 		removeNames = append(removeNames, n)
@@ -172,12 +255,24 @@ func (t Table[T, K]) Update(ctx context.Context, key K, set map[string]types.Att
 	if len(removeNames) > 0 {
 		parts = append(parts, "REMOVE "+strings.Join(removeNames, ", "))
 	}
+	for k, v := range valueFields {
+		values[k] = v
+	}
 	var valueNames map[string]types.AttributeValue
 	if len(values) > 0 {
 		valueNames = values
 	}
-	_, err = t.DB.UpdateItem(ctx, &dynamodb.UpdateItemInput{TableName: aws.String(t.Name), Key: k, UpdateExpression: aws.String(strings.Join(parts, " ")), ExpressionAttributeNames: names, ExpressionAttributeValues: valueNames})
-	return err
+	in := &dynamodb.UpdateItemInput{TableName: aws.String(t.Name), Key: k, UpdateExpression: aws.String(strings.Join(parts, " ")), ExpressionAttributeNames: nonEmptyNames(names), ExpressionAttributeValues: valueNames, ReturnValues: returnValues}
+	setCondition(&in.ConditionExpression, options.Condition)
+	out, err := t.DB.UpdateItem(ctx, in)
+	if err != nil {
+		return zero, err
+	}
+	if returnValues == types.ReturnValueAllNew {
+		v, e := t.Codec.Decode(out.Attributes)
+		return v, e
+	}
+	return zero, nil
 }
 func (t Table[T, K]) Query(ctx context.Context, q QueryRequest) (Page[T], error) {
 	var result Page[T]
@@ -217,6 +312,12 @@ func (t Table[T, K]) Query(ctx context.Context, q QueryRequest) (Page[T], error)
 	if q.IndexName != "" {
 		in.IndexName = aws.String(q.IndexName)
 	}
+	if q.Page.ConsistentRead {
+		if q.GlobalIndex {
+			return result, errors.New("dynamox: consistent reads are not supported on GSIs")
+		}
+		in.ConsistentRead = aws.Bool(true)
+	}
 	out, err := t.DB.Query(ctx, in)
 	if err != nil {
 		return result, err
@@ -233,10 +334,21 @@ func (t Table[T, K]) Query(ctx context.Context, q QueryRequest) (Page[T], error)
 	return result, nil
 }
 func (t Table[T, K]) Scan(ctx context.Context, p PageRequest) (Page[T], error) {
+	return t.ScanWithOptions(ctx, ScanOptions{Page: p})
+}
+func (t Table[T, K]) ScanWithOptions(ctx context.Context, options ScanOptions) (Page[T], error) {
 	var result Page[T]
-	in := &dynamodb.ScanInput{TableName: aws.String(t.Name), ExclusiveStartKey: p.Cursor}
+	p := options.Page
+	names, values, _, err := expressionMaps(options.Filter)
+	if err != nil {
+		return result, err
+	}
+	in := &dynamodb.ScanInput{TableName: aws.String(t.Name), ExclusiveStartKey: p.Cursor, ConsistentRead: aws.Bool(p.ConsistentRead), ExpressionAttributeNames: nonEmptyNames(names), ExpressionAttributeValues: values}
 	if p.Limit > 0 {
 		in.Limit = aws.Int32(p.Limit)
+	}
+	if options.Filter != nil && options.Filter.Text != "" {
+		in.FilterExpression = aws.String(options.Filter.Text)
 	}
 	out, err := t.DB.Scan(ctx, in)
 	if err != nil {
@@ -275,12 +387,14 @@ type ReadItem struct {
 	Decode func(map[string]types.AttributeValue) error
 }
 type WriteItem struct {
-	Table    string
-	Put      map[string]types.AttributeValue
-	Key      map[string]types.AttributeValue
-	Set      map[string]types.AttributeValue
-	Remove   []string
-	KeyNames []string
+	Table      string
+	Put        map[string]types.AttributeValue
+	Key        map[string]types.AttributeValue
+	Set        map[string]types.AttributeValue
+	Remove     []string
+	KeyNames   []string
+	Condition  *Expression
+	CreateOnly bool
 }
 
 func Read[T any, K any](table Table[T, K], key K, dst *T) (ReadItem, error) {
@@ -300,20 +414,61 @@ func Read[T any, K any](table Table[T, K], key K, dst *T) (ReadItem, error) {
 	}}, nil
 }
 func (t Table[T, K]) PutOperation(v T) (WriteItem, error) {
+	return t.PutOperationWithOptions(v, WriteOptions{})
+}
+func (t Table[T, K]) PutOperationWithOptions(v T, options WriteOptions) (WriteItem, error) {
 	item, err := t.Codec.Encode(v)
 	if err != nil {
 		return WriteItem{}, err
 	}
-	return WriteItem{Table: t.Name, Put: item}, nil
+	_, _, _, err = expressionMaps(options.Condition)
+	if err != nil {
+		return WriteItem{}, err
+	}
+	return WriteItem{Table: t.Name, Put: item, Condition: options.Condition}, nil
+}
+func (t Table[T, K]) CreateOperation(v T, options WriteOptions) (WriteItem, error) {
+	i, err := t.Codec.Encode(v)
+	if err != nil {
+		return WriteItem{}, err
+	}
+	names, _, condition, err := expressionMaps(options.Condition)
+	if err != nil {
+		return WriteItem{}, err
+	}
+	pk := uniquePlaceholder(names, "#dx_create_pk")
+	keyName := t.PartitionName
+	if t.SortName != "" {
+		keyName = t.SortName
+	}
+	names[pk] = keyName
+	text := "attribute_not_exists(" + pk + ")" + conditionSuffix(condition)
+	rawValues := map[string]any{}
+	if options.Condition != nil {
+		for k, v := range options.Condition.Values {
+			rawValues[k] = v
+		}
+	}
+	return WriteItem{Table: t.Name, Put: i, Condition: &Expression{Text: text, Names: names, Values: rawValues}, CreateOnly: true}, nil
 }
 func (t Table[T, K]) DeleteOperation(key K) (WriteItem, error) {
+	return t.DeleteOperationWithOptions(key, WriteOptions{})
+}
+func (t Table[T, K]) DeleteOperationWithOptions(key K, options WriteOptions) (WriteItem, error) {
 	k, err := t.Key(key)
 	if err != nil {
 		return WriteItem{}, err
 	}
-	return WriteItem{Table: t.Name, Key: k}, nil
+	_, _, _, err = expressionMaps(options.Condition)
+	if err != nil {
+		return WriteItem{}, err
+	}
+	return WriteItem{Table: t.Name, Key: k, Condition: options.Condition}, nil
 }
 func (t Table[T, K]) UpdateOperation(key K, set map[string]types.AttributeValue, remove []string, keyNames ...string) (WriteItem, error) {
+	return t.UpdateOperationWithOptions(key, set, remove, WriteOptions{}, keyNames...)
+}
+func (t Table[T, K]) UpdateOperationWithOptions(key K, set map[string]types.AttributeValue, remove []string, options WriteOptions, keyNames ...string) (WriteItem, error) {
 	k, err := t.Key(key)
 	if err != nil {
 		return WriteItem{}, err
@@ -321,7 +476,11 @@ func (t Table[T, K]) UpdateOperation(key K, set map[string]types.AttributeValue,
 	if len(set) == 0 && len(remove) == 0 {
 		return WriteItem{}, errors.New("dynamox: update has no fields")
 	}
-	return WriteItem{Table: t.Name, Key: k, Set: set, Remove: remove, KeyNames: keyNames}, nil
+	_, _, _, err = expressionMaps(options.Condition)
+	if err != nil {
+		return WriteItem{}, err
+	}
+	return WriteItem{Table: t.Name, Key: k, Set: set, Remove: remove, KeyNames: keyNames, Condition: options.Condition}, nil
 }
 func TransactGet(ctx context.Context, db DynamoAPI, items ...ReadItem) error {
 	if len(items) == 0 {
@@ -364,7 +523,17 @@ func TransactWrite(ctx context.Context, db DynamoAPI, items ...WriteItem) error 
 	for _, i := range items {
 		switch {
 		case i.Put != nil:
-			req = append(req, types.TransactWriteItem{Put: &types.Put{TableName: aws.String(i.Table), Item: i.Put}})
+			put := &types.Put{TableName: aws.String(i.Table), Item: i.Put}
+			setCondition(&put.ConditionExpression, i.Condition)
+			if i.Condition != nil {
+				put.ExpressionAttributeNames = nonEmptyNames(i.Condition.Names)
+				values, e := marshalExpressionValues(i.Condition.Values)
+				if e != nil {
+					return e
+				}
+				put.ExpressionAttributeValues = values
+			}
+			req = append(req, types.TransactWriteItem{Put: put})
 		case i.Set != nil || len(i.Remove) > 0:
 			if len(i.Set) == 0 && len(i.Remove) == 0 {
 				return errors.New("dynamox: update has no fields")
@@ -384,14 +553,20 @@ func TransactWrite(ctx context.Context, db DynamoAPI, items ...WriteItem) error 
 					}
 				}
 			}
-			names := map[string]string{}
-			values := map[string]types.AttributeValue{}
+			names, values, _, err := expressionMaps(i.Condition)
+			if err != nil {
+				return err
+			}
+			if values == nil {
+				values = map[string]types.AttributeValue{}
+			}
+			fieldValues := map[string]types.AttributeValue{}
 			var sets []string
 			for j, name := range sortedKeys(i.Set) {
-				n := fmt.Sprintf("#f%d", j)
-				x := fmt.Sprintf(":v%d", j)
+				n := uniquePlaceholder(names, fmt.Sprintf("#dx_f%d", j))
+				x := uniquePlaceholderAV(values, fmt.Sprintf(":dx_v%d", j))
 				names[n] = name
-				values[x] = i.Set[name]
+				fieldValues[x] = i.Set[name]
 				sets = append(sets, n+" = "+x)
 			}
 			var removes []string
@@ -401,7 +576,7 @@ func TransactWrite(ctx context.Context, db DynamoAPI, items ...WriteItem) error 
 						return fmt.Errorf("dynamox: key field %q cannot be updated", name)
 					}
 				}
-				n := fmt.Sprintf("#r%d", len(names))
+				n := uniquePlaceholder(names, fmt.Sprintf("#dx_r%d", len(removes)))
 				names[n] = name
 				removes = append(removes, n)
 			}
@@ -412,19 +587,94 @@ func TransactWrite(ctx context.Context, db DynamoAPI, items ...WriteItem) error 
 			if len(removes) > 0 {
 				parts = append(parts, "REMOVE "+strings.Join(removes, ", "))
 			}
+			for k, v := range fieldValues {
+				values[k] = v
+			}
 			var valueNames map[string]types.AttributeValue
 			if len(values) > 0 {
 				valueNames = values
 			}
-			req = append(req, types.TransactWriteItem{Update: &types.Update{TableName: aws.String(i.Table), Key: i.Key, UpdateExpression: aws.String(strings.Join(parts, " ")), ExpressionAttributeNames: names, ExpressionAttributeValues: valueNames}})
+			u := &types.Update{TableName: aws.String(i.Table), Key: i.Key, UpdateExpression: aws.String(strings.Join(parts, " ")), ExpressionAttributeNames: nonEmptyNames(names), ExpressionAttributeValues: valueNames}
+			setCondition(&u.ConditionExpression, i.Condition)
+			req = append(req, types.TransactWriteItem{Update: u})
 		case i.Key != nil:
-			req = append(req, types.TransactWriteItem{Delete: &types.Delete{TableName: aws.String(i.Table), Key: i.Key}})
+			d := &types.Delete{TableName: aws.String(i.Table), Key: i.Key}
+			if i.Condition != nil {
+				d.ExpressionAttributeNames = nonEmptyNames(i.Condition.Names)
+				values, e := marshalExpressionValues(i.Condition.Values)
+				if e != nil {
+					return e
+				}
+				d.ExpressionAttributeValues = values
+			}
+			setCondition(&d.ConditionExpression, i.Condition)
+			req = append(req, types.TransactWriteItem{Delete: d})
 		default:
 			return errors.New("dynamox: invalid transaction write")
 		}
 	}
 	_, err := db.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{TransactItems: req})
 	return err
+}
+
+func expressionMaps(e *Expression) (map[string]string, map[string]types.AttributeValue, string, error) {
+	names := map[string]string{}
+	text := ""
+	if e != nil {
+		for k, v := range e.Names {
+			names[k] = v
+		}
+		values, err := marshalExpressionValues(e.Values)
+		if err != nil {
+			return nil, nil, "", err
+		}
+		return names, values, e.Text, nil
+	}
+	return names, nil, text, nil
+}
+func marshalExpressionValues(values map[string]any) (map[string]types.AttributeValue, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+	encoded, err := attributevalue.MarshalMap(values)
+	if err != nil {
+		return nil, err
+	}
+	for name := range values {
+		if _, ok := encoded[name]; !ok {
+			return nil, fmt.Errorf("dynamox: condition value %q has an unsupported type", name)
+		}
+	}
+	return encoded, nil
+}
+func setCondition(dst **string, e *Expression) {
+	if e != nil && e.Text != "" {
+		*dst = aws.String(e.Text)
+	}
+}
+func conditionSuffix(text string) string {
+	if text == "" {
+		return ""
+	}
+	return " AND (" + text + ")"
+}
+func uniquePlaceholder[V any](existing map[string]V, base string) string {
+	p := base
+	for i := 0; ; i++ {
+		if _, ok := existing[p]; !ok {
+			return p
+		}
+		p = fmt.Sprintf("%s_%d", base, i+1)
+	}
+}
+func uniquePlaceholderAV(existing map[string]types.AttributeValue, base string) string {
+	return uniquePlaceholder(existing, base)
+}
+func nonEmptyNames(names map[string]string) map[string]string {
+	if len(names) == 0 {
+		return nil
+	}
+	return names
 }
 func sortedKeys[V any](m map[string]V) []string {
 	r := make([]string, 0, len(m))
