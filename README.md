@@ -82,6 +82,72 @@ Use the same release version for `go get` and `go install` when pinning dynamox 
 - `generate` validates first, then writes `client_gen.go` into the output directory (or to the exact output file when the path is not a directory).
 - `sync` creates missing tables with on-demand billing and all-attribute index projections. Existing tables are checked for key and index drift; dynamox reports differences without applying changes. Use `--endpoint http://localhost:8000` for DynamoDB Local.
 
+## AWS IAM permissions
+
+`fmt`, `validate`, and `generate` are local operations and need no AWS permissions. `sync` needs permission to inspect the tables declared in the schema and create any that are missing. It does not list every table in the account, update existing tables, or delete tables, so it does not need `dynamodb:ListTables`, `dynamodb:UpdateTable`, or `dynamodb:DeleteTable`.
+
+For a deployment role that runs `dynamox sync`, allow these actions only on the model table ARNs from `@@table(...)`. Include `dynamox_sequences` when the schema uses `@default(serial)`:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Sid": "DynamoxSyncTables",
+    "Effect": "Allow",
+    "Action": ["dynamodb:CreateTable", "dynamodb:DescribeTable"],
+    "Resource": [
+      "arn:aws:dynamodb:REGION:ACCOUNT_ID:table/<MODEL_TABLE_1>",
+      "arn:aws:dynamodb:REGION:ACCOUNT_ID:table/<MODEL_TABLE_2>",
+      "arn:aws:dynamodb:REGION:ACCOUNT_ID:table/dynamox_sequences"
+    ]
+  }]
+}
+```
+
+Replace `REGION`, `ACCOUNT_ID`, and the model table placeholders. Omit the sequence table ARN if the schema has no serial IDs. If table creation belongs to a separate deployment role, the application role does not need `CreateTable` or `DescribeTable`.
+
+For an application using all generated CRUD, scan, query, relation, and transaction helpers, grant data actions on its model tables. Add `Query` on each secondary index ARN used by the schema. Add `UpdateItem` on `dynamox_sequences` only when the schema uses `@default(serial)`:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DynamoxModelTableData",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:GetItem",
+        "dynamodb:PutItem",
+        "dynamodb:UpdateItem",
+        "dynamodb:DeleteItem",
+        "dynamodb:Query",
+        "dynamodb:Scan"
+      ],
+      "Resource": [
+        "arn:aws:dynamodb:REGION:ACCOUNT_ID:table/<MODEL_TABLE_1>",
+        "arn:aws:dynamodb:REGION:ACCOUNT_ID:table/<MODEL_TABLE_2>"
+      ]
+    },
+    {
+      "Sid": "DynamoxSecondaryIndexQueries",
+      "Effect": "Allow",
+      "Action": "dynamodb:Query",
+      "Resource": [
+        "arn:aws:dynamodb:REGION:ACCOUNT_ID:table/<TABLE_WITH_INDEX>/index/<INDEX_NAME>"
+      ]
+    },
+    {
+      "Sid": "DynamoxSerialIDs",
+      "Effect": "Allow",
+      "Action": "dynamodb:UpdateItem",
+      "Resource": "arn:aws:dynamodb:REGION:ACCOUNT_ID:table/dynamox_sequences"
+    }
+  ]
+}
+```
+
+Replace the placeholders and list each model table and queried index. Omit the index statement when there are no secondary-index queries, and omit the serial statement when there are no serial IDs. If the application uses only some generated operations, remove unused actions such as `Scan` or `DeleteItem`. DynamoDB authorizes transaction helper reads and writes through their underlying `GetItem`, `PutItem`, `UpdateItem`, and `DeleteItem` actions. See AWS's [table and index IAM examples](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/iam-policy-specific-table-indexes.html), [transaction authorization guide](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/transaction-apis-iam.html), and [DynamoDB service authorization reference](https://docs.aws.amazon.com/service-authorization/latest/reference/list_dynamodb.html).
+
 ## Generated client
 
 ```go
