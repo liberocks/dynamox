@@ -64,4 +64,4 @@ jobs:
           test "${coverage}" = "100.0%"
 
       - name: Run emulator benchmarks
-        run: go test -run '^$' -bench '^BenchmarkDynamoxRuntime$' -benchmem -count=1 ./runtime
+        run: go test -run '^$' -bench '^BenchmarkDynamox' -benchmem -count=1 ./runtime ./examples/blog/dynamoxgen
