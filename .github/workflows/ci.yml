@@ -31,6 +31,10 @@ jobs:
         with:
           node-version: 22
 
+      - name: Install extension development dependencies
+        working-directory: vscode-dynamox
+        run: npm ci
+
       - name: Run extension completion tests
         working-directory: vscode-dynamox
         run: npm test

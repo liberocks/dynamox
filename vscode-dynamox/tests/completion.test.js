@@ -2,7 +2,7 @@
 
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { complete } = require("../completion");
+const { complete } = require("../out/src/completion");
 
 function labels(text, beforeCursor = text) {
   return complete(text, beforeCursor.length).map((item) => item.label);

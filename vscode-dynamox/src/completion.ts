@@ -1,8 +1,31 @@
-"use strict";
+type BlockKind = "model" | "type" | "enum";
+type CompletionKind = "attribute" | "constant" | "field" | "keyword" | "property" | "snippet" | "type";
 
-const scalarTypes = ["String", "Int", "Float", "Boolean", "DateTime", "Bytes", "Json"];
+export interface CompletionEntry {
+  label: string;
+  insertText: string;
+  detail: string;
+  kind: CompletionKind;
+}
 
-function complete(text, offset) {
+interface FieldEntry {
+  name: string;
+  type: string;
+  list: boolean;
+}
+
+interface SchemaBlock {
+  kind: BlockKind;
+  name: string;
+  open: number;
+  close: number;
+  body: string;
+  sourceBody: string;
+}
+
+const scalarTypes: string[] = ["String", "Int", "Float", "Boolean", "DateTime", "Bytes", "Json"];
+
+export function complete(text: string, offset: number): CompletionEntry[] {
   const before = text.slice(0, offset);
   const lineStart = before.lastIndexOf("\n") + 1;
   const linePrefix = before.slice(lineStart);
@@ -13,8 +36,8 @@ function complete(text, offset) {
   const blocks = getBlocks(masked, text);
   const block = blockAt(blocks, offset);
   const currentFields = block ? fieldsIn(block.body) : [];
-  const completions = [];
-  const add = (label, insertText = label, detail = "", kind = "keyword") => {
+  const completions: CompletionEntry[] = [];
+  const add = (label: string, insertText = label, detail = "", kind: CompletionKind = "keyword") => {
     if (!completions.some((item) => item.label === label)) {
       completions.push({ label, insertText, detail, kind });
     }
@@ -116,9 +139,9 @@ function complete(text, offset) {
 
   if (/(?:^|\s)@\w*$/.test(callPrefix)) {
     const field = callPrefix.match(/^\s*\w+\s+(\w+)/);
-    const fieldType = field && field[1];
+    const fieldType = field?.[1] ?? "";
     const isPartitionKey = /@(?:id|partitionKey)\b/.test(callPrefix);
-    let attrs = [];
+    let attrs: string[] = [];
     if (block.kind === "model" && ["String", "Int", "Float", "DateTime", "Bytes"].includes(fieldType)) {
       attrs = ["@id", "@partitionKey", "@sortKey"];
       if (isPartitionKey && (fieldType === "String" || fieldType === "Int")) attrs.push("@default");
@@ -168,7 +191,7 @@ function complete(text, offset) {
   return completions;
 }
 
-function maskCommentsAndStrings(text) {
+function maskCommentsAndStrings(text: string): string {
   const chars = text.split("");
   let inString = false;
   let inComment = false;
@@ -201,8 +224,8 @@ function maskCommentsAndStrings(text) {
   return chars.join("");
 }
 
-function getBlocks(masked, original) {
-  const blocks = [];
+function getBlocks(masked: string, original: string): SchemaBlock[] {
+  const blocks: SchemaBlock[] = [];
   const declaration = /\b(model|type|enum)\s+([A-Za-z_]\w*)\s*\{/g;
   let match;
   while ((match = declaration.exec(masked))) {
@@ -215,7 +238,7 @@ function getBlocks(masked, original) {
     }
     const close = depth === 0 ? end - 1 : masked.length;
     blocks.push({
-      kind: match[1],
+      kind: match[1] as BlockKind,
       name: match[2],
       open,
       close,
@@ -227,12 +250,12 @@ function getBlocks(masked, original) {
   return blocks;
 }
 
-function blockAt(blocks, offset) {
+function blockAt(blocks: SchemaBlock[], offset: number): SchemaBlock | undefined {
   return blocks.find((block) => offset > block.open && offset <= block.close);
 }
 
-function fieldsIn(body) {
-  const fields = [];
+function fieldsIn(body: string): FieldEntry[] {
+  const fields: FieldEntry[] = [];
   for (const line of body.split("\n")) {
     const match = line.match(/^\s*([A-Za-z_]\w*)\s+([A-Za-z_]\w*)(\[\])?/);
     if (match && !match[1].startsWith("@@")) fields.push({ name: match[1], type: match[2], list: Boolean(match[3]) });
@@ -240,8 +263,6 @@ function fieldsIn(body) {
   return fields;
 }
 
-function indexesIn(body) {
+function indexesIn(body: string): string[] {
   return [...body.matchAll(/@@index\s*\(\s*name\s*:\s*["']([^"']+)["']/g)].map((match) => match[1]);
 }
-
-module.exports = { complete };
