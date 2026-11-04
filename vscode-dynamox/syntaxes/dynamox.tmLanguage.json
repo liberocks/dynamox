@@ -1,0 +1,49 @@
+{
+  "scopeName": "source.dynamox",
+  "patterns": [
+    {"include": "#comments"},
+    {"include": "#strings"},
+    {"include": "#model-attributes"},
+    {"include": "#field-attributes"},
+    {"include": "#declarations"},
+    {"include": "#types"},
+    {"include": "#constants"},
+    {"include": "#punctuation"}
+  ],
+  "repository": {
+    "comments": {
+      "name": "comment.line.double-slash.dynamox",
+      "match": "//.*$"
+    },
+    "strings": {
+      "name": "string.quoted.double.dynamox",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [{"name": "constant.character.escape.dynamox", "match": "\\\\."}]
+    },
+    "model-attributes": {
+      "name": "keyword.other.attribute.dynamox",
+      "match": "@@(?:table|index)\\b"
+    },
+    "field-attributes": {
+      "name": "entity.name.function.attribute.dynamox",
+      "match": "@(?:id|partitionKey|sortKey|default|jsonString|relation)\\b"
+    },
+    "declarations": {
+      "name": "keyword.control.declaration.dynamox",
+      "match": "\\b(?:model|type|enum)\\b"
+    },
+    "types": {
+      "name": "storage.type.dynamox",
+      "match": "\\b(?:String|Int|Float|Boolean|DateTime|Bytes)\\b"
+    },
+    "constants": {
+      "name": "constant.language.dynamox",
+      "match": "\\b(?:GSI|LSI|uuidv1|uuidv4|uuidv7|serial|objectid)\\b"
+    },
+    "punctuation": {
+      "name": "punctuation.separator.dynamox",
+      "match": "[{}\\[\\](),:?=]"
+    }
+  }
+}

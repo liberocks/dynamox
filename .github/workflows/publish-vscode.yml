@@ -1,0 +1,88 @@
+name: Publish Dynamox VS Code Extension
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Package ${{ matrix.vsce_target }} extension
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: windows
+            goarch: amd64
+            vsce_target: win32-x64
+          - goos: windows
+            goarch: arm64
+            vsce_target: win32-arm64
+          - goos: darwin
+            goarch: amd64
+            vsce_target: darwin-x64
+          - goos: darwin
+            goarch: arm64
+            vsce_target: darwin-arm64
+          - goos: linux
+            goarch: amd64
+            vsce_target: linux-x64
+          - goos: linux
+            goarch: arm64
+            vsce_target: linux-arm64
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Package VSIX
+        working-directory: vscode-dynamox
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: npx --yes @vscode/vsce@4.0.2 package --target ${{ matrix.vsce_target }} --no-dependencies
+
+      - name: Upload VSIX
+        uses: actions/upload-artifact@v4
+        with:
+          name: dynamox-vsix-${{ matrix.vsce_target }}
+          path: vscode-dynamox/*.vsix
+          if-no-files-found: error
+
+  publish:
+    name: Publish all platform packages
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Download all VSIX packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: dynamox-vsix-*
+          path: dist/vsix
+          merge-multiple: true
+
+      - name: Publish to Visual Studio Marketplace
+        run: |
+          for package in dist/vsix/*.vsix; do
+            npx --yes @vscode/vsce@4.0.2 publish --packagePath "$package" --oidc
+          done

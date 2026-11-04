@@ -1,0 +1,8 @@
+.gitignore
+.vscode/**
+.github/**
+node_modules/**
+scripts/**
+tests/**
+*.vsix
+npm-debug.log

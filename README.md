@@ -84,6 +84,10 @@ Use the same release version for `go get` and `go install` when pinning dynamox 
 - `generate` validates first, then writes `client_gen.go` into the output directory (or to the exact output file when the path is not a directory).
 - `sync` creates missing tables with on-demand billing and all-attribute index projections. Existing tables are checked for key and index drift; dynamox reports differences without applying changes. Use `--endpoint http://localhost:8000` for DynamoDB Local.
 
+## VS Code
+
+The [`vscode-dynamox`](./vscode-dynamox) extension adds syntax highlighting, completions, live schema diagnostics, and formatting for `.dynamox` files. It bundles the editor engine and is published manually through the **Publish Dynamox VS Code Extension** GitHub Actions workflow. Configure Marketplace Trusted Publishing for the `dynamox` publisher with the repository and workflow details in the extension README.
+
 ## AWS IAM permissions
 
 `fmt`, `validate`, and `generate` are local operations and need no AWS permissions. `sync` needs permission to inspect the tables declared in the schema and create any that are missing. It does not list every table in the account, update existing tables, or delete tables, so it does not need `dynamodb:ListTables`, `dynamodb:UpdateTable`, or `dynamodb:DeleteTable`.
