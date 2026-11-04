@@ -152,7 +152,7 @@ Replace the placeholders and list each model table and queried index. Omit the i
 
 ## Benchmarks
 
-CI runs the runtime benchmarks against [Moto](https://github.com/getmoto/moto), an open-source DynamoDB emulator, without AWS credentials or an AWS account. The benchmarks cover Get, Create, Update, secondary-index Query, and Scan. Their timings include Go, the AWS SDK, HTTP, and emulator overhead; they are useful for comparing changes in the same environment, not for estimating AWS service latency or throughput.
+CI runs the runtime and generated-client benchmarks against [Moto](https://github.com/getmoto/moto), an open-source DynamoDB emulator, without AWS credentials or an AWS account. They cover Get, Create, Update, secondary-index Query, Scan, loading a user's posts through the generated relation method, and generated transactional reads and writes. Their timings include Go, the AWS SDK, HTTP, and emulator overhead; they are useful for comparing changes in the same environment, not for estimating AWS service latency or throughput.
 
 To run them locally, install Moto and start its [standalone server](https://docs.getmoto.org/en/latest/docs/server_mode.html):
 
@@ -164,7 +164,7 @@ moto_server -H 127.0.0.1 -p 8000
 In another terminal, run:
 
 ```sh
-DYNAMODB_ENDPOINT=http://127.0.0.1:8000 go test -run '^$' -bench '^BenchmarkDynamoxRuntime$' -benchmem ./runtime
+DYNAMODB_ENDPOINT=http://127.0.0.1:8000 go test -run '^$' -bench '^BenchmarkDynamox' -benchmem ./runtime ./examples/blog/dynamoxgen
 ```
 
 ## Generated client
