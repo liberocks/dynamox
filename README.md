@@ -58,13 +58,24 @@ The relation's `references` field must be the target model's primary partition k
 
 ## CLI
 
+Use dynamox as a dependency from your application repository. Add the Go module to the application and install the standalone CLI once:
+
 ```sh
-go run ./cmd/dynamox fmt schema.dynamox
-go run ./cmd/dynamox fmt --check schema.dynamox
-go run ./cmd/dynamox validate schema.dynamox
-go run ./cmd/dynamox generate --out ./db schema.dynamox
-go run ./cmd/dynamox sync --profile my-aws-profile --region us-east-1 schema.dynamox
+go get github.com/liberocks/dynamox@latest
+go install github.com/liberocks/dynamox/cmd/dynamox@latest
 ```
+
+Run the installed `dynamox` command from the application directory that contains `schema.dynamox` (or pass the schema's path). The Go install bin directory must be on `PATH`.
+
+```sh
+dynamox fmt ./schema.dynamox
+dynamox fmt --check ./schema.dynamox
+dynamox validate ./schema.dynamox
+dynamox generate --out ./db ./schema.dynamox
+dynamox sync --profile my-aws-profile --region us-east-1 ./schema.dynamox
+```
+
+Use the same release version for `go get` and `go install` when pinning dynamox in a reproducible application setup. The version-suffixed `go install` installs the CLI without adding its command package to the application's dependencies.
 
 - `fmt` writes canonical indentation and spacing while retaining comments. `fmt --check` exits nonzero if formatting would change the file.
 - `validate` checks schema names, field types, keys, indexes, and relation read paths without contacting AWS.
