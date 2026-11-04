@@ -1,0 +1,89 @@
+# dynamox
+
+dynamox is a schema-first DynamoDB ORM for Go. Each schema model maps to one physical DynamoDB table. Generated methods only query a primary key or a declared secondary index; other fields remain strongly typed model fields and can be read after an item is loaded.
+
+## Schema
+
+Save a schema as `schema.dynamox`:
+
+```prisma
+type Preferences {
+  theme String
+  digest Boolean
+  alternate ThemeOption?
+}
+
+type ThemeOption {
+  value String
+}
+
+model User {
+  id String @id
+  name String
+  preferences Preferences @jsonString
+  settings Preferences @jsonString
+  nickname String?
+  posts Post[] @relation(fields: [id], references: [authorId], index: "ByAuthor")
+
+  @@table(name: "users")
+}
+
+model Post {
+  id String @id
+  authorId String
+  editorId String?
+  title String
+  createdAt DateTime
+  editTimes DateTime[]
+  author User @relation(fields: [authorId], references: [id])
+  editor User? @relation(fields: [editorId], references: [id])
+
+  @@table(name: "posts")
+  @@index(name: "ByAuthor", partition: authorId, sort: createdAt, type: GSI)
+}
+```
+
+Supported scalar types are `String`, `Int`, `Float`, `Boolean`, `DateTime`, and `Bytes`. Add `?` for optional fields and `[]` for lists. `DateTime` uses Go `time.Time` and is stored as RFC 3339 text. Named `type` fields marked `@jsonString` are encoded as JSON strings; invalid stored JSON returns a field-specific decode error. Enums are generated as named Go string types.
+
+The relation's `references` field must be the target model's primary partition key for a to-one relation, or a declared target index partition key for a to-many relation. Relation reads are explicit and page through to-many results.
+
+## CLI
+
+```sh
+go run ./cmd/dynamox fmt schema.dynamox
+go run ./cmd/dynamox fmt --check schema.dynamox
+go run ./cmd/dynamox validate schema.dynamox
+go run ./cmd/dynamox generate --out ./db schema.dynamox
+go run ./cmd/dynamox sync --profile my-aws-profile --region us-east-1 schema.dynamox
+```
+
+- `fmt` writes canonical indentation and spacing while retaining comments. `fmt --check` exits nonzero if formatting would change the file.
+- `validate` checks schema names, field types, keys, indexes, and relation read paths without contacting AWS.
+- `generate` validates first, then writes `client_gen.go` into the output directory (or to the exact output file when the path is not a directory).
+- `sync` creates missing tables with on-demand billing and all-attribute index projections. Existing tables are checked for key and index drift; dynamox reports differences without applying changes. Use `--endpoint http://localhost:8000` for DynamoDB Local.
+
+## Generated client
+
+```go
+cfg, err := config.LoadDefaultConfig(ctx)
+if err != nil { return err }
+client := dynamoxgen.NewClient(dynamodb.NewFromConfig(cfg))
+
+user, found, err := client.GetUser(ctx, dynamoxgen.UserKey{ID: "u-1"})
+page, err := client.QueryPostUsingByAuthor(ctx, "u-1", &dynamoxgen.PostByAuthorSort{
+    Operator: runtime.GreaterEqual,
+    Value: time.Now().Add(-24 * time.Hour),
+}, runtime.PageRequest{Limit: 25})
+withPosts, err := client.GetUserWithPosts(ctx, dynamoxgen.UserKey{ID: "u-1"}, runtime.PageRequest{Limit: 25})
+
+var transactionalUser dynamoxgen.User
+readUser, err := client.ReadUser(dynamoxgen.UserKey{ID: "u-1"}, &transactionalUser)
+post := dynamoxgen.Post{ID: "p-1", AuthorID: "u-1", Title: "Hello"}
+writePost, err := client.WritePost(post)
+err = client.TransactGet(ctx, readUser)
+err = client.TransactWrite(ctx, writePost)
+```
+
+Generated CRUD methods include `Create<Model>`, `Get<Model>`, `Update<Model>`, `Delete<Model>`, and paginated `Scan<Model>`. Query methods are emitted only for the table primary key and declared indexes. Update inputs use `Set<Field>` pointers; optional fields also have `Clear<Field>` flags. Transaction helpers compose generated read and write operations with `TransactGet` and `TransactWrite`.
+
+The module uses AWS SDK for Go v2. The caller supplies the SDK client, so region, credentials, retries, and endpoint configuration remain controlled by the application.
