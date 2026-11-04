@@ -1,8 +1,8 @@
 # dynamox
 
-[![Statement coverage: 100%](https://img.shields.io/badge/statement%20coverage-100%25-brightgreen)](https://github.com/liberocks/dynamox/actions/workflows/ci.yml)
+[![Implementation statement coverage: 100%](https://img.shields.io/badge/implementation%20coverage-100%25-brightgreen)](https://github.com/liberocks/dynamox/actions/workflows/ci.yml)
 
-dynamox is a schema-first DynamoDB ORM for Go. Each schema model maps to one physical DynamoDB table. Generated methods only query a primary key or a declared secondary index; other fields remain strongly typed model fields and can be read after an item is loaded.
+dynamox is a schema-first DynamoDB ORM for Go. Models can share a physical table when their primary key declarations agree. Generated methods only query a primary key or a declared secondary index; other fields remain strongly typed model fields and can be read after an item is loaded.
 
 ## Schema
 
@@ -54,7 +54,26 @@ model SequenceItem {
 }
 ```
 
-Supported scalar types are `String`, `Int`, `Float`, `Boolean`, `DateTime`, and `Bytes`. Add `?` for optional fields and `[]` for lists. `DateTime` uses Go `time.Time` and is stored as RFC 3339 text. Named `type` fields marked `@jsonString` are encoded as JSON strings; invalid stored JSON returns a field-specific decode error. Enums are generated as named Go string types.
+Supported types are `String`, `Int`, `Float`, `Boolean`, `DateTime`, `Bytes`, and `Json`. Add `?` for optional fields and `[]` for lists. `DateTime` uses Go `time.Time` and is stored as RFC 3339 text. A named `type` field marked `@document` is stored as a native DynamoDB map or list; nested named types are stored natively as well. Nil optional typed documents and nested fields are absent. `Json` represents heterogeneous native DynamoDB values, including maps, lists, numbers, booleans, strings, and null. An optional `Json?` field uses a pointer: nil omits the field, while a pointer to a nil `runtime.JSON` stores DynamoDB NULL. Empty maps and lists remain empty collections. JSON numbers decode as `attributevalue.Number` to retain precision. Unsupported values, cycles, and non-finite numbers return encoding errors. Named `type` fields marked `@jsonString` continue to be encoded as JSON strings. Enums are generated as named Go string types.
+
+```prisma
+type RecordValue {
+  label String
+  value String
+}
+type RecordDetail {
+  prompt String
+  values RecordValue[]
+  providerData Json
+}
+model DocumentRecord {
+  id String @id
+  details RecordDetail[] @document
+  rawProviderPayload Json?
+  legacySettings RecordDetail @jsonString
+  @@table(name: "document_records")
+}
+```
 
 Primary keys can generate an ID when the field is omitted: `@default(uuidv1)`, `@default(uuidv4)`, `@default(uuidv7)`, and `@default(objectid)` require a `String` key; `@default(serial)` requires an `Int` key. Supplied non-empty string IDs and non-zero integer IDs are preserved. Generated `Create<Model>` methods return `(Model, error)`, so callers receive the generated ID. Integer serial allocation uses atomic DynamoDB updates in the shared `dynamox_sequences` table; `dynamox sync` creates that table automatically when needed. Serial IDs increase per model but can have gaps if a later item write fails. Because zero means “not supplied” for an `Int` key, integer serial IDs cannot be explicitly set to zero.
 
@@ -104,7 +123,7 @@ Use the same release version for `go get` and `go install` when pinning dynamox 
 
 ## VS Code
 
-The [`vscode-dynamox`](./vscode-dynamox) extension adds syntax highlighting, completions, live schema diagnostics, and formatting for `.dynamox` files. It bundles the editor engine and is released manually through the **Publish Dynamox VS Code Extension** GitHub Actions workflow. Configure Marketplace Trusted Publishing for the `dynamox` publisher with the repository and workflow details in the extension README.
+The [`vscode-dynamox`](./vscode-dynamox) extension adds syntax highlighting, completions, live schema diagnostics, and formatting for `.dynamox` files, including `Json` and `@document`. It bundles the editor engine and is released manually through the **Publish Dynamox VS Code Extension** GitHub Actions workflow. Configure Marketplace Trusted Publishing for the `dynamox` publisher with the repository and workflow details in the extension README.
 
 ## AWS IAM permissions
 
@@ -220,23 +239,27 @@ err = client.TransactWrite(ctx, writePost)
 
 ### Generated types
 
-The generated package contains one Go struct for each model and named Go types for schema `type` and `enum` blocks. Model scalar fields map to `string`, `int64`, `float64`, `bool`, `time.Time`, or `[]byte`; optional fields become pointers and list fields become slices. Custom types remain named structs, and enums are named string types with constants for their declared values.
+The generated package contains one Go struct for each model and named Go types for schema `type` and `enum` blocks. Model scalar fields map to `string`, `int64`, `float64`, `bool`, `time.Time`, `[]byte`, or `runtime.JSON`; optional fields become pointers and list fields become slices. Custom types remain named structs, and enums are named string types with constants for their declared values.
 
 Relation declarations describe how generated relation loaders fetch related rows; relation fields are not stored on the model struct. For each model, dynamox also emits a `<Model>Key` struct containing its primary key fields and a `<Model>Update` struct containing typed `Set<Field>` values. Optional fields additionally have `Clear<Field>` flags, so an update can distinguish leaving a value unchanged from removing it. Primary-key fields are not update fields.
 
-Fields marked `@jsonString` use their declared Go type in the model while storing JSON text in DynamoDB. The generated encoder and decoder handle `encoding/json` conversion, including optional and list values. Invalid stored JSON returns an error identifying the model and field. DateTime fields use `time.Time` in Go and UTC RFC 3339 Nano strings in DynamoDB.
+Fields marked `@document` use their declared Go struct or slice type while storing native DynamoDB maps and lists. `Json` fields use `runtime.JSON` and preserve native DynamoDB types; optional JSON fields distinguish absence from explicit NULL. `@jsonString` retains its existing JSON text representation. DateTime fields use `time.Time` in Go and UTC RFC 3339 Nano strings in DynamoDB. Generated encoders return errors rather than dropping failed conversions.
 
 ### Generated client methods
 
-The generated `Client` wraps the AWS SDK for Go v2 DynamoDB client supplied to `NewClient`. `NewClientWithIDGenerator` is also generated for applications that want to provide their own ID generator; otherwise model defaults such as UUIDv7, ObjectID, or serial IDs are applied by `Create<Model>` when the key is omitted. The create method returns the saved model, including its generated key.
+The generated `Client` wraps the AWS SDK for Go v2 DynamoDB client supplied to `NewClient`. `NewClientWithIDGenerator` remains available, and `NewClientWithOptions` accepts `runtime.ClientOptions` for physical table-name overrides and a custom ID generator. The map keys are schema table names; names not overridden keep their schema defaults. Overrides apply to CRUD, queries, scans, relations, serial counters, and transaction operations. Construction does not contact DynamoDB or provision tables. Model ID defaults are applied by `Create<Model>` when the key is omitted.
 
 For each model, the client exposes:
 
-- `Create<Model>`, `Get<Model>`, `Update<Model>`, and `Delete<Model>` for typed item operations. `Get<Model>` returns the model, a found flag, and an error.
-- `Scan<Model>` for an unfiltered, paginated table scan.
+- `Create<Model>`, `Get<Model>`, `Update<Model>`, and `Delete<Model>` for typed item operations. Additive `WithOptions` methods accept conditions or read consistency. `Put<Model>` performs a full-item upsert, and `Update<Model>Returning` returns the decoded `ALL_NEW` result from the same update request.
+- `Scan<Model>` for a paginated table scan, and `Scan<Model>WithOptions` for consistency and filter expressions.
 - `Query<Model>By<PrimaryKey>` and `Query<Model>Using<Index>` only for the primary key and declared indexes. Each query requires partition-key equality; indexes with a sort key also get a typed sort-condition struct supporting `=`, `<`, `<=`, `>`, `>=`, and `begins_with`. Non-index fields intentionally have no query method.
 - `Read<Model>`, `Write<Model>`, `Update<Model>Operation`, and `Delete<Model>Operation` helpers for composing transactions.
 
-Queries and scans take `runtime.PageRequest` (`Limit`, `Cursor`, and scan direction) and return `runtime.Page[Model]` with `Items` and the next `Cursor`. Pass that cursor to the next request to fetch another page. Relation loaders such as `GetUserWithPosts` first read the model and then use the declared indexed path; to-many relations return a page and can therefore be paginated.
+Queries and scans take `runtime.PageRequest` (`Limit`, `Cursor`, direction, and optional consistency) and return `runtime.Page[Model]` with `Items` and the next `Cursor`. Scan filters use `runtime.Expression{Text, Names, Values}` and preserve DynamoDB pagination: a filtered page can be empty and still carry a cursor. Consistent reads are rejected for GSIs; primary-table and LSI reads support them. Query filters never create implicit scans.
 
-`TransactGet` and `TransactWrite` accept the generated read/write operations and execute them through DynamoDB transactions. The application retains control over AWS region, credentials, retries, and endpoint configuration because it supplies the SDK client.
+Conditions use DynamoDB expression syntax and `runtime.Expression` placeholders. Values are Go values and Dynamox encodes them. For example: `runtime.Expression{Text: "#status = :pending", Names: map[string]string{"#status": "status"}, Values: map[string]any{":pending": "pending"}}`. Pass the expression with `runtime.WriteOptions{Condition: ...}`. Update placeholders avoid names and values already used by the condition.
+
+`TransactGet` and `TransactWrite` accept operations from any generated package sharing the same DynamoDB connection, so independent source and target schemas can participate in one atomic transaction. `Create<Model>Operation` retains create-if-absent behavior; `Write<Model>` performs a full-item replacement. AWS transaction cancellation errors remain available through `errors.As`.
+
+`examples/dynamox` contains separate source and target packages and a conditional transaction that conditionally updates an source pending while creating target record. Models sharing `@@table` can contribute distinct indexes. Conflicting keys, capacity, TTL, or same-name index declarations fail validation. `dynamox sync` merges and provisions each physical table once. Applications using Terraform or CloudFormation can use table-name overrides without provisioning permissions.

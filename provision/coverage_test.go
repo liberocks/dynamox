@@ -97,8 +97,8 @@ func TestSyncAllProvisioningFailuresAndNoop(t *testing.T) {
 	}
 	drift := &scriptedAPI{describes: []*dynamodb.DescribeTableOutput{{Table: activeTable()}}}
 	created, err := Sync(context.Background(), drift, []Table{want, want})
-	if err != nil || len(created) != 0 || drift.describeCalls != 6 {
-		t.Fatalf("existing tables should be checked independently: %v %v calls=%d", created, err, drift.describeCalls)
+	if err != nil || len(created) != 0 || drift.describeCalls != 3 {
+		t.Fatalf("duplicate physical tables should be checked once: %v %v calls=%d", created, err, drift.describeCalls)
 	}
 }
 

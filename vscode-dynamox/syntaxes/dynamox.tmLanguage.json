@@ -28,7 +28,7 @@
     },
     "field-attributes": {
       "name": "entity.name.function.attribute.dynamox",
-      "match": "@(?:id|partitionKey|sortKey|default|jsonString|relation)\\b"
+      "match": "@(?:id|partitionKey|sortKey|default|jsonString|document|relation)\\b"
     },
     "declarations": {
       "name": "keyword.control.declaration.dynamox",
@@ -36,7 +36,7 @@
     },
     "types": {
       "name": "storage.type.dynamox",
-      "match": "\\b(?:String|Int|Float|Boolean|DateTime|Bytes)\\b"
+      "match": "\\b(?:String|Int|Float|Boolean|DateTime|Bytes|Json)\\b"
     },
     "constants": {
       "name": "constant.language.dynamox",

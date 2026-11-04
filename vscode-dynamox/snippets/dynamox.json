@@ -29,5 +29,15 @@
       "}"
     ],
     "description": "Create a Dynamox enum"
+  },
+  "Dynamox native document field": {
+    "prefix": "document",
+    "body": ["${1:field} ${2:Type} @document"],
+    "description": "Store a named type as a native DynamoDB document"
+  },
+  "Dynamox heterogeneous JSON field": {
+    "prefix": "jsonfield",
+    "body": ["${1:payload} Json${2:?}"],
+    "description": "Store a heterogeneous native DynamoDB value"
   }
 }

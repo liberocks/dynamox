@@ -390,3 +390,15 @@ func TestNextSerialUsesAtomicDynamoDBCounter(t *testing.T) {
 		t.Fatal("malformed counter")
 	}
 }
+
+func TestNextSerialUsesPhysicalTableOverride(t *testing.T) {
+	d := &coverageDB{fakeDynamo: &fakeDynamo{}, updateOut: &dynamodb.UpdateItemOutput{Attributes: map[string]types.AttributeValue{"value": &types.AttributeValueMemberN{Value: "28"}}}}
+	got, err := NextSerialWithTable(context.Background(), d, "serials-test", "model-name")
+	if err != nil || got != 28 {
+		t.Fatalf("serial %d %v", got, err)
+	}
+	in := d.update
+	if aws.ToString(in.TableName) != "serials-test" || in.Key["name"].(*types.AttributeValueMemberS).Value != "model-name" {
+		t.Fatalf("serial table override or logical counter name missing: %#v", in)
+	}
+}

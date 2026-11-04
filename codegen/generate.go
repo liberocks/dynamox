@@ -20,7 +20,7 @@ func Generate(s *schema.Schema, packageName string) ([]byte, error) {
 		return nil, fmt.Errorf("%s", ds[0].Error())
 	}
 	var b bytes.Buffer
-	needsJSON, needsTime, needsFmt := false, false, false
+	needsJSON, needsTime, needsFmt := false, false, true
 	for _, m := range s.Models {
 		if len(m.Relations) > 0 {
 			needsFmt = true
@@ -34,6 +34,9 @@ func Generate(s *schema.Schema, packageName string) ([]byte, error) {
 			}
 			if f.Type == "DateTime" {
 				needsTime, needsFmt = true, true
+			}
+			if f.Type == "Json" {
+				needsFmt = true
 			}
 		}
 	}
@@ -66,9 +69,14 @@ func Generate(s *schema.Schema, packageName string) ([]byte, error) {
 	for _, t := range s.Types {
 		fmt.Fprintf(&b, "\ntype %s struct {\n", goName(t.Name))
 		for _, f := range t.Fields {
-			fmt.Fprintf(&b, "\t%s %s `json:%s dynamodbav:%s`\n", goName(f.Name), fieldType(f, s), strconv.Quote(f.Name), strconv.Quote(f.Name))
+			dynamoTag := f.Name
+			if f.Optional {
+				dynamoTag += ",omitempty"
+			}
+			fmt.Fprintf(&b, "\t%s %s `json:%s dynamodbav:%s`\n", goName(f.Name), fieldType(f, s), strconv.Quote(f.Name), strconv.Quote(dynamoTag))
 		}
 		fmt.Fprintln(&b, "}")
+		generateCompositeCodec(&b, t, s)
 	}
 	for _, m := range s.Models {
 		fmt.Fprintf(&b, "\ntype %s struct {\n", goName(m.Name))
@@ -102,18 +110,19 @@ func Generate(s *schema.Schema, packageName string) ([]byte, error) {
 		fmt.Fprintln(&b, "}")
 		generateCodec(&b, m, s)
 	}
-	fmt.Fprintln(&b, "\ntype Client struct {\n\tidGenerator runtime.IDGenerator")
+	fmt.Fprintln(&b, "\ntype Client struct {\n\tidGenerator runtime.IDGenerator\n\tsequenceTable string")
 	for _, m := range s.Models {
 		fmt.Fprintf(&b, "\t%s runtime.Table[%s,%sKey]\n", lowerFirst(goName(m.Name)), goName(m.Name), goName(m.Name))
 	}
 	fmt.Fprintln(&b, "}")
-	fmt.Fprintln(&b, "\nfunc NewClient(db runtime.DynamoAPI) *Client { return NewClientWithIDGenerator(db,runtime.GenerateID) }")
-	fmt.Fprintln(&b, "func NewClientWithIDGenerator(db runtime.DynamoAPI,generateID runtime.IDGenerator) *Client {")
-	fmt.Fprintln(&b, "\tif generateID==nil { generateID=runtime.GenerateID }")
-	fmt.Fprintln(&b, "\tc := &Client{idGenerator:generateID}")
+	fmt.Fprintln(&b, "\nfunc NewClient(db runtime.DynamoAPI) *Client { return NewClientWithOptions(db,runtime.ClientOptions{}) }")
+	fmt.Fprintln(&b, "func NewClientWithIDGenerator(db runtime.DynamoAPI,generateID runtime.IDGenerator) *Client { return NewClientWithOptions(db,runtime.ClientOptions{IDGenerator:generateID}) }")
+	fmt.Fprintln(&b, "func NewClientWithOptions(db runtime.DynamoAPI,options runtime.ClientOptions) *Client {")
+	fmt.Fprintln(&b, "\tgenerateID:=options.IDGenerator;if generateID==nil { generateID=runtime.GenerateID }")
+	fmt.Fprintln(&b, "\tc := &Client{idGenerator:generateID,sequenceTable:options.TableName(runtime.SequenceTableName)}")
 	for _, m := range s.Models {
 		n := lowerFirst(goName(m.Name))
-		fmt.Fprintf(&b, "\tc.%s = runtime.Table[%s,%sKey]{DB:db,Name:%s,PartitionName:%s,SortName:%s,Codec:runtime.Codec[%s]{Encode:encode%s,Decode:decode%s},Key:key%s}\n", n, goName(m.Name), goName(m.Name), strconv.Quote(m.Table), strconv.Quote(m.Partition), strconv.Quote(m.Sort), goName(m.Name), goName(m.Name), goName(m.Name), goName(m.Name))
+		fmt.Fprintf(&b, "\tc.%s = runtime.Table[%s,%sKey]{DB:db,Name:options.TableName(%s),PartitionName:%s,SortName:%s,Codec:runtime.Codec[%s]{Encode:encode%s,Decode:decode%s},Key:key%s}\n", n, goName(m.Name), goName(m.Name), strconv.Quote(m.Table), strconv.Quote(m.Partition), strconv.Quote(m.Sort), goName(m.Name), goName(m.Name), goName(m.Name), goName(m.Name))
 	}
 	fmt.Fprintln(&b, "\treturn c\n}")
 	fmt.Fprintln(&b, "\nfunc (c *Client) TransactGet(ctx context.Context,items ...runtime.ReadItem) error { return runtime.TransactGet(ctx,c.db(),items...) }")
@@ -138,6 +147,55 @@ func Generate(s *schema.Schema, packageName string) ([]byte, error) {
 	return out, nil
 }
 
+func generateCompositeCodec(b *bytes.Buffer, t schema.Composite, s *schema.Schema) {
+	n := goName(t.Name)
+	fmt.Fprintf(b, "\nfunc (v %s) MarshalDynamoDBAttributeValue()(types.AttributeValue,error){type dynamoxPlain%s %s;plain:=dynamoxPlain%s(v)\n", n, n, n, n)
+	for _, f := range t.Fields {
+		if f.Type == "Json" {
+			field := goName(f.Name)
+			if f.Optional {
+				fmt.Fprintf(b, "plain.%s=nil\n", field)
+			} else {
+				fmt.Fprintf(b, "var zero%s %s;plain.%s=zero%s\n", field, fieldType(f, s), field, field)
+			}
+		}
+	}
+	fmt.Fprintf(b, "item,err:=attributevalue.MarshalMap(plain);if err!=nil{return nil,fmt.Errorf(%s,err)}\n", strconv.Quote("dynamox: encode document "+t.Name+": %w"))
+	for _, f := range t.Fields {
+		if f.Type != "Json" {
+			continue
+		}
+		field := goName(f.Name)
+		label := strconv.Quote("dynamox: encode " + t.Name + "." + f.Name + ": %w")
+		if f.Optional {
+			fmt.Fprintf(b, "if v.%s!=nil{av,err:=runtime.MarshalJSON(*v.%s);if err!=nil{return nil,fmt.Errorf(%s,err)};item[%s]=av}\n", field, field, label, strconv.Quote(f.Name))
+		} else {
+			fmt.Fprintf(b, "{av,err:=runtime.MarshalJSON(v.%s);if err!=nil{return nil,fmt.Errorf(%s,err)};item[%s]=av}\n", field, label, strconv.Quote(f.Name))
+		}
+	}
+	fmt.Fprintln(b, "return &types.AttributeValueMemberM{Value:item},nil}")
+	fmt.Fprintf(b, "\nfunc (v *%s) UnmarshalDynamoDBAttributeValue(value types.AttributeValue)error{document,ok:=value.(*types.AttributeValueMemberM);if !ok{return fmt.Errorf(%s)};plain:=make(map[string]types.AttributeValue,len(document.Value));for k,av:=range document.Value{plain[k]=av}\n", n, strconv.Quote("dynamox: decode document "+t.Name+": expected map attribute"))
+	for _, f := range t.Fields {
+		if f.Type == "Json" {
+			fmt.Fprintf(b, "delete(plain,%s)\n", strconv.Quote(f.Name))
+		}
+	}
+	fmt.Fprintf(b, "type dynamoxPlain%s %s;var plainValue dynamoxPlain%s;if err:=attributevalue.UnmarshalMap(plain,&plainValue);err!=nil{return fmt.Errorf(%s,err)};out:=%s(plainValue)\n", n, n, n, strconv.Quote("dynamox: decode document "+t.Name+": %w"), n)
+	for _, f := range t.Fields {
+		if f.Type != "Json" {
+			continue
+		}
+		field := goName(f.Name)
+		label := strconv.Quote("dynamox: decode " + t.Name + "." + f.Name + ": %w")
+		assign := "out." + field + "=value"
+		if f.Optional {
+			assign = "out." + field + "=&value"
+		}
+		fmt.Fprintf(b, "if av,ok:=document.Value[%s];ok{var value %s;if err:=runtime.UnmarshalJSON(av,&value);err!=nil{return fmt.Errorf(%s,err)};%s}\n", strconv.Quote(f.Name), valueType(f, s), label, assign)
+	}
+	fmt.Fprintln(b, "*v=out;return nil}")
+}
+
 func generateCodec(b *bytes.Buffer, m schema.Model, s *schema.Schema) {
 	model := goName(m.Name)
 	fmt.Fprintf(b, "\nfunc key%s(k %sKey) (map[string]types.AttributeValue,error) {\n\tkey:=map[string]types.AttributeValue{}\n", model, model)
@@ -150,57 +208,75 @@ func generateCodec(b *bytes.Buffer, m schema.Model, s *schema.Schema) {
 		if f.Type == "DateTime" {
 			fmt.Fprintf(b, "\tkey[%s]=&types.AttributeValueMemberS{Value:k.%s.UTC().Format(time.RFC3339Nano)}\n", strconv.Quote(name), field)
 		} else {
-			fmt.Fprintf(b, "\tav,_:=attributevalue.Marshal(k.%s);key[%s]=av\n", field, strconv.Quote(name))
+			fmt.Fprintf(b, "\t{av,err:=attributevalue.Marshal(k.%s);if err!=nil{return nil,fmt.Errorf(%s,err)};key[%s]=av}\n", field, strconv.Quote("dynamox: encode "+m.Name+" key "+name+": %w"), strconv.Quote(name))
 		}
 	}
 	fmt.Fprintln(b, "\treturn key,nil\n}")
 	fmt.Fprintf(b, "\nfunc encode%s(v %s) (map[string]types.AttributeValue,error) {\n\tplain:=v\n", model, model)
 	for _, f := range m.Fields {
-		if has(f, "jsonString") || f.Type == "DateTime" {
+		if has(f, "jsonString") || f.Type == "DateTime" || f.Type == "Json" {
+			field := goName(f.Name)
 			if f.Optional {
-				fmt.Fprintf(b, "\tplain.%s=nil\n", goName(f.Name))
+				fmt.Fprintf(b, "\tplain.%s=nil\n", field)
 			} else {
-				fmt.Fprintf(b, "\tvar zero%s %s;plain.%s=zero%s\n", goName(f.Name), fieldType(f, s), goName(f.Name), goName(f.Name))
+				fmt.Fprintf(b, "\tvar zero%s %s;plain.%s=zero%s\n", field, fieldType(f, s), field, field)
 			}
 		}
 	}
-	fmt.Fprintln(b, "\titem,_:=attributevalue.MarshalMap(plain)")
+	fmt.Fprintf(b, "\titem,err:=attributevalue.MarshalMap(plain);if err!=nil{return nil,fmt.Errorf(%s,err)}\n", strconv.Quote("dynamox: encode "+m.Name+": %w"))
 	for _, f := range m.Fields {
 		if has(f, "relation") {
 			continue
 		}
+		field := goName(f.Name)
+		fieldLabel := strconv.Quote("dynamox: encode " + m.Name + "." + f.Name + ": %w")
 		switch {
 		case has(f, "jsonString"):
 			if f.Optional {
-				fmt.Fprintf(b, "\tif v.%s!=nil { data,err:=json.Marshal(v.%s);if err!=nil{return nil,fmt.Errorf(%s,err)};item[%s]=&types.AttributeValueMemberS{Value:string(data)} }\n", goName(f.Name), goName(f.Name), strconv.Quote("dynamox: encode "+m.Name+"."+f.Name+": %w"), strconv.Quote(f.Name))
+				fmt.Fprintf(b, "\tif v.%s!=nil {data,err:=json.Marshal(v.%s);if err!=nil{return nil,fmt.Errorf(%s,err)};item[%s]=&types.AttributeValueMemberS{Value:string(data)}}\n", field, field, fieldLabel, strconv.Quote(f.Name))
 			} else {
-				fmt.Fprintf(b, "\t{data,err:=json.Marshal(v.%s);if err!=nil{return nil,fmt.Errorf(%s,err)};item[%s]=&types.AttributeValueMemberS{Value:string(data)}}\n", goName(f.Name), strconv.Quote("dynamox: encode "+m.Name+"."+f.Name+": %w"), strconv.Quote(f.Name))
+				fmt.Fprintf(b, "\t{data,err:=json.Marshal(v.%s);if err!=nil{return nil,fmt.Errorf(%s,err)};item[%s]=&types.AttributeValueMemberS{Value:string(data)}}\n", field, fieldLabel, strconv.Quote(f.Name))
+			}
+		case f.Type == "Json":
+			if f.Optional {
+				fmt.Fprintf(b, "\tif v.%s!=nil {av,err:=runtime.MarshalJSON(*v.%s);if err!=nil{return nil,fmt.Errorf(%s,err)};item[%s]=av}\n", field, field, fieldLabel, strconv.Quote(f.Name))
+			} else {
+				fmt.Fprintf(b, "\t{av,err:=runtime.MarshalJSON(v.%s);if err!=nil{return nil,fmt.Errorf(%s,err)};item[%s]=av}\n", field, fieldLabel, strconv.Quote(f.Name))
 			}
 		case f.Type == "DateTime":
 			if f.List {
 				if f.Optional {
-					fmt.Fprintf(b, "\tif v.%s!=nil {raw:=make([]string,len(*v.%s));for i,value:=range *v.%s {raw[i]=value.UTC().Format(time.RFC3339Nano)};av,_:=attributevalue.Marshal(raw);item[%s]=av}\n", goName(f.Name), goName(f.Name), goName(f.Name), strconv.Quote(f.Name))
+					fmt.Fprintf(b, "\tif v.%s!=nil {raw:=make([]string,len(*v.%s));for i,value:=range *v.%s {raw[i]=value.UTC().Format(time.RFC3339Nano)};av,err:=attributevalue.Marshal(raw);if err!=nil{return nil,fmt.Errorf(%s,err)};item[%s]=av}\n", field, field, field, fieldLabel, strconv.Quote(f.Name))
 				} else {
-					fmt.Fprintf(b, "\traw%s:=make([]string,len(v.%s));for i,value:=range v.%s {raw%s[i]=value.UTC().Format(time.RFC3339Nano)};av,_:=attributevalue.Marshal(raw%s);item[%s]=av\n", goName(f.Name), goName(f.Name), goName(f.Name), goName(f.Name), goName(f.Name), strconv.Quote(f.Name))
+					fmt.Fprintf(b, "\traw%s:=make([]string,len(v.%s));for i,value:=range v.%s {raw%s[i]=value.UTC().Format(time.RFC3339Nano)};av,err:=attributevalue.Marshal(raw%s);if err!=nil{return nil,fmt.Errorf(%s,err)};item[%s]=av\n", field, field, field, field, field, fieldLabel, strconv.Quote(f.Name))
 				}
 			} else if f.Optional {
-				fmt.Fprintf(b, "\tif v.%s!=nil {item[%s]=&types.AttributeValueMemberS{Value:v.%s.UTC().Format(time.RFC3339Nano)}}\n", goName(f.Name), strconv.Quote(f.Name), goName(f.Name))
+				fmt.Fprintf(b, "\tif v.%s!=nil {item[%s]=&types.AttributeValueMemberS{Value:v.%s.UTC().Format(time.RFC3339Nano)}}\n", field, strconv.Quote(f.Name), field)
 			} else {
-				fmt.Fprintf(b, "\titem[%s]=&types.AttributeValueMemberS{Value:v.%s.UTC().Format(time.RFC3339Nano)}\n", strconv.Quote(f.Name), goName(f.Name))
+				fmt.Fprintf(b, "\titem[%s]=&types.AttributeValueMemberS{Value:v.%s.UTC().Format(time.RFC3339Nano)}\n", strconv.Quote(f.Name), field)
 			}
 		}
 	}
 	fmt.Fprintln(b, "\treturn item,nil\n}")
 	fmt.Fprintf(b, "\nfunc decode%s(item map[string]types.AttributeValue) (%s,error) {\n\tplain:=make(map[string]types.AttributeValue,len(item));for k,v:=range item{plain[k]=v}\n", model, model)
 	for _, f := range m.Fields {
-		if has(f, "jsonString") || f.Type == "DateTime" {
+		if has(f, "jsonString") || f.Type == "DateTime" || f.Type == "Json" {
 			fmt.Fprintf(b, "\tdelete(plain,%s)\n", strconv.Quote(f.Name))
 		}
 	}
-	fmt.Fprintf(b, "\tvar out %s;if err:=attributevalue.UnmarshalMap(plain,&out);err!=nil{return out,err}\n", model)
+	fmt.Fprintf(b, "\tvar out %s;if err:=attributevalue.UnmarshalMap(plain,&out);err!=nil{return out,fmt.Errorf(%s,err)}\n", model, strconv.Quote("dynamox: decode "+m.Name+": %w"))
 	for _, f := range m.Fields {
 		if has(f, "jsonString") {
-			fmt.Fprintf(b, "\tif av,ok:=item[%s];ok { raw,ok:=av.(*types.AttributeValueMemberS);if !ok{return out,fmt.Errorf(%s)};if err:=json.Unmarshal([]byte(raw.Value),&out.%s);err!=nil{return out,fmt.Errorf(%s,err)} }\n", strconv.Quote(f.Name), strconv.Quote("dynamox: decode "+m.Name+"."+f.Name+": expected JSON string attribute"), goName(f.Name), strconv.Quote("dynamox: decode "+m.Name+"."+f.Name+": %w"))
+			fmt.Fprintf(b, "\tif av,ok:=item[%s];ok {raw,ok:=av.(*types.AttributeValueMemberS);if !ok{return out,fmt.Errorf(%s)};if err:=json.Unmarshal([]byte(raw.Value),&out.%s);err!=nil{return out,fmt.Errorf(%s,err)}}\n", strconv.Quote(f.Name), strconv.Quote("dynamox: decode "+m.Name+"."+f.Name+": expected JSON string attribute"), goName(f.Name), strconv.Quote("dynamox: decode "+m.Name+"."+f.Name+": %w"))
+		} else if f.Type == "Json" {
+			field := goName(f.Name)
+			destType := valueType(f, s)
+			label := strconv.Quote("dynamox: decode " + m.Name + "." + f.Name + ": %w")
+			assign := "out." + field + "=value"
+			if f.Optional {
+				assign = "out." + field + "=&value"
+			}
+			fmt.Fprintf(b, "\tif av,ok:=item[%s];ok {var value %s;if err:=runtime.UnmarshalJSON(av,&value);err!=nil{return out,fmt.Errorf(%s,err)};%s}\n", strconv.Quote(f.Name), destType, label, assign)
 		} else if f.Type == "DateTime" {
 			field := goName(f.Name)
 			if f.List {
@@ -217,100 +293,97 @@ func generateCodec(b *bytes.Buffer, m schema.Model, s *schema.Schema) {
 		}
 	}
 	fmt.Fprintln(b, "\treturn out,nil\n}")
+	generateUpdateCodec(b, m, s)
+}
+
+func generateUpdateCodec(b *bytes.Buffer, m schema.Model, s *schema.Schema) {
+	n := goName(m.Name)
+	fmt.Fprintf(b, "\nfunc encode%sUpdate(p %sUpdate)(map[string]types.AttributeValue,[]string,error){set:=map[string]types.AttributeValue{};remove:=[]string{}\n", n, n)
+	for _, f := range m.Fields {
+		if has(f, "relation") || f.Name == m.Partition || f.Name == m.Sort {
+			continue
+		}
+		field := goName(f.Name)
+		label := strconv.Quote("dynamox: encode " + m.Name + "." + f.Name + ": %w")
+		if f.Optional {
+			fmt.Fprintf(b, "if p.Set%s!=nil&&p.Clear%s{return nil,nil,fmt.Errorf(%s)}\n", field, field, strconv.Quote("dynamox: "+f.Name+" cannot be set and cleared together"))
+		}
+		var expr string
+		switch {
+		case has(f, "jsonString"):
+			expr = "func()(types.AttributeValue,error){data,err:=json.Marshal(*p.Set" + field + ");if err!=nil{return nil,err};return &types.AttributeValueMemberS{Value:string(data)},nil}()"
+		case f.Type == "Json":
+			expr = "runtime.MarshalJSON(*p.Set" + field + ")"
+		case f.Type == "DateTime" && f.List:
+			expr = "func()(types.AttributeValue,error){raw:=make([]string,len(*p.Set" + field + "));for i,value:=range *p.Set" + field + "{raw[i]=value.UTC().Format(time.RFC3339Nano)};return attributevalue.Marshal(raw)}()"
+		case f.Type == "DateTime":
+			expr = "func()(types.AttributeValue,error){return &types.AttributeValueMemberS{Value:(*p.Set" + field + ").UTC().Format(time.RFC3339Nano)},nil}()"
+		default:
+			expr = "attributevalue.Marshal(*p.Set" + field + ")"
+		}
+		fmt.Fprintf(b, "if p.Set%s!=nil{av,err:=%s;if err!=nil{return nil,nil,fmt.Errorf(%s,err)};set[%s]=av}\n", field, expr, label, strconv.Quote(f.Name))
+		if f.Optional {
+			fmt.Fprintf(b, "if p.Clear%s{remove=append(remove,%s)}\n", field, strconv.Quote(f.Name))
+		}
+	}
+	fmt.Fprintln(b, "return set,remove,nil}")
 }
 
 func generateMethods(b *bytes.Buffer, m schema.Model, s *schema.Schema) {
 	n := goName(m.Name)
 	lo := lowerFirst(n)
 	key := n + "Key"
-	fmt.Fprintf(b, "\nfunc (c *Client) Create%s(ctx context.Context,v %s) (%s,error) {\n", n, n, n)
+	fmt.Fprintf(b, "\nfunc (c *Client) Create%s(ctx context.Context,v %s)(%s,error){return c.Create%sWithOptions(ctx,v,runtime.WriteOptions{})}\n", n, n, n, n)
+	fmt.Fprintf(b, "func (c *Client) Create%sWithOptions(ctx context.Context,v %s,options runtime.WriteOptions)(%s,error){\n", n, n, n)
 	if id := m.Field(m.Partition); id != nil && id.Default != "" {
 		field := goName(id.Name)
 		if id.Default == "serial" {
-			fmt.Fprintf(b, "\tif v.%s==0 {id,err:=runtime.NextSerial(ctx,c.db(),%s);if err!=nil{return %s{},err};v.%s=id}\n", field, strconv.Quote(m.Table), n, field)
+			fmt.Fprintf(b, "if v.%s==0{id,err:=runtime.NextSerialWithTable(ctx,c.db(),c.sequenceTable,%s);if err!=nil{return %s{},err};v.%s=id}\n", field, strconv.Quote(m.Table), n, field)
 		} else {
-			fmt.Fprintf(b, "\tif v.%s==\"\" {id,err:=c.idGenerator(%s);if err!=nil{return %s{},err};v.%s=id}\n", field, strconv.Quote(id.Default), n, field)
+			fmt.Fprintf(b, "if v.%s==\"\"{id,err:=c.idGenerator(%s);if err!=nil{return %s{},err};v.%s=id}\n", field, strconv.Quote(id.Default), n, field)
 		}
 	}
-	fmt.Fprintf(b, "\tif err:=c.%s.Create(ctx,v);err!=nil{return %s{},err};return v,nil\n}\n", lo, n)
-	fmt.Fprintf(b, "func (c *Client) Get%s(ctx context.Context,k %s) (%s,bool,error) { return c.%s.Get(ctx,k) }\n", n, key, n, lo)
-	fmt.Fprintf(b, "func (c *Client) Delete%s(ctx context.Context,k %s) error { return c.%s.Delete(ctx,k) }\n", n, key, lo)
-	fmt.Fprintf(b, "func (c *Client) Scan%s(ctx context.Context,p runtime.PageRequest) (runtime.Page[%s],error) { return c.%s.Scan(ctx,p) }\n", n, n, lo)
-	fmt.Fprintf(b, "func (c *Client) Update%s(ctx context.Context,k %s,p %sUpdate) error {\n\tset:=map[string]types.AttributeValue{};remove:=[]string{}\n", n, key, n)
-	for _, f := range m.Fields {
-		if has(f, "relation") || f.Name == m.Partition || f.Name == m.Sort {
-			continue
-		}
-		field := goName(f.Name)
-		if f.Optional {
-			fmt.Fprintf(b, "\tif p.Set%s!=nil&&p.Clear%s{return fmt.Errorf(%s)}\n", field, field, strconv.Quote("dynamox: "+f.Name+" cannot be set and cleared together"))
-		}
-		if has(f, "jsonString") {
-			fmt.Fprintf(b, "\tif p.Set%s!=nil {data,err:=json.Marshal(*p.Set%s);if err!=nil{return fmt.Errorf(%s,err)};set[%s]=&types.AttributeValueMemberS{Value:string(data)}}\n", field, field, strconv.Quote("dynamox: encode "+m.Name+"."+f.Name+": %w"), strconv.Quote(f.Name))
-		} else if f.Type == "DateTime" {
-			if f.List {
-				fmt.Fprintf(b, "\tif p.Set%s!=nil {raw:=make([]string,len(*p.Set%s));for i,value:=range *p.Set%s {raw[i]=value.UTC().Format(time.RFC3339Nano)};av,_:=attributevalue.Marshal(raw);set[%s]=av}\n", field, field, field, strconv.Quote(f.Name))
-			} else {
-				fmt.Fprintf(b, "\tif p.Set%s!=nil {set[%s]=&types.AttributeValueMemberS{Value:(*p.Set%s).UTC().Format(time.RFC3339Nano)}}\n", field, strconv.Quote(f.Name), field)
-			}
-		} else {
-			fmt.Fprintf(b, "\tif p.Set%s!=nil {av,_:=attributevalue.Marshal(*p.Set%s);set[%s]=av}\n", field, field, strconv.Quote(f.Name))
-		}
-		if f.Optional {
-			fmt.Fprintf(b, "\tif p.Clear%s {remove=append(remove,%s)}\n", field, strconv.Quote(f.Name))
-		}
-	}
-	fmt.Fprintf(b, "\treturn c.%s.Update(ctx,k,set,remove,%s)\n}\n", lo, keyNames(m))
-	fmt.Fprintf(b, "func (c *Client) Read%s(k %s,dst *%s) (runtime.ReadItem,error) { return runtime.Read(c.%s,k,dst) }\n", n, key, n, lo)
-	fmt.Fprintf(b, "func (c *Client) Write%s(v %s) (runtime.WriteItem,error) { return c.%s.PutOperation(v) }\n", n, n, lo)
-	fmt.Fprintf(b, "func (c *Client) Delete%sOperation(k %s) (runtime.WriteItem,error) { return c.%s.DeleteOperation(k) }\n", n, key, lo)
-	fmt.Fprintf(b, "func (c *Client) Update%sOperation(k %s,p %sUpdate) (runtime.WriteItem,error) {\n\tset:=map[string]types.AttributeValue{};remove:=[]string{}\n", n, key, n)
-	for _, f := range m.Fields {
-		if has(f, "relation") || f.Name == m.Partition || f.Name == m.Sort {
-			continue
-		}
-		field := goName(f.Name)
-		if f.Optional {
-			fmt.Fprintf(b, "\tif p.Set%s!=nil&&p.Clear%s{return runtime.WriteItem{},fmt.Errorf(%s)}\n", field, field, strconv.Quote("dynamox: "+f.Name+" cannot be set and cleared together"))
-		}
-		if has(f, "jsonString") {
-			fmt.Fprintf(b, "\tif p.Set%s!=nil {data,err:=json.Marshal(*p.Set%s);if err!=nil{return runtime.WriteItem{},fmt.Errorf(%s,err)};set[%s]=&types.AttributeValueMemberS{Value:string(data)}}\n", field, field, strconv.Quote("dynamox: encode "+m.Name+"."+f.Name+": %w"), strconv.Quote(f.Name))
-		} else if f.Type == "DateTime" {
-			if f.List {
-				fmt.Fprintf(b, "\tif p.Set%s!=nil {raw:=make([]string,len(*p.Set%s));for i,value:=range *p.Set%s {raw[i]=value.UTC().Format(time.RFC3339Nano)};av,_:=attributevalue.Marshal(raw);set[%s]=av}\n", field, field, field, strconv.Quote(f.Name))
-			} else {
-				fmt.Fprintf(b, "\tif p.Set%s!=nil {set[%s]=&types.AttributeValueMemberS{Value:(*p.Set%s).UTC().Format(time.RFC3339Nano)}}\n", field, strconv.Quote(f.Name), field)
-			}
-		} else {
-			fmt.Fprintf(b, "\tif p.Set%s!=nil {av,_:=attributevalue.Marshal(*p.Set%s);set[%s]=av}\n", field, field, strconv.Quote(f.Name))
-		}
-		if f.Optional {
-			fmt.Fprintf(b, "\tif p.Clear%s {remove=append(remove,%s)}\n", field, strconv.Quote(f.Name))
-		}
-	}
-	fmt.Fprintf(b, "\treturn c.%s.UpdateOperation(k,set,remove,%s)\n}\n", lo, keyNames(m))
+	fmt.Fprintf(b, "if err:=c.%s.CreateWithOptions(ctx,v,options);err!=nil{return %s{},err};return v,nil}\n", lo, n)
+	fmt.Fprintf(b, "func (c *Client) Put%s(ctx context.Context,v %s,options ...runtime.WriteOptions)error{return c.%s.Put(ctx,v,options...)}\n", n, n, lo)
+	fmt.Fprintf(b, "func (c *Client) Get%s(ctx context.Context,k %s)(%s,bool,error){return c.%s.Get(ctx,k)}\n", n, key, n, lo)
+	fmt.Fprintf(b, "func (c *Client) Get%sWithOptions(ctx context.Context,k %s,options runtime.ReadOptions)(%s,bool,error){return c.%s.GetWithOptions(ctx,k,options)}\n", n, key, n, lo)
+	fmt.Fprintf(b, "func (c *Client) Delete%s(ctx context.Context,k %s)error{return c.%s.Delete(ctx,k)}\n", n, key, lo)
+	fmt.Fprintf(b, "func (c *Client) Delete%sWithOptions(ctx context.Context,k %s,options runtime.WriteOptions)error{return c.%s.DeleteWithOptions(ctx,k,options)}\n", n, key, lo)
+	fmt.Fprintf(b, "func (c *Client) Scan%s(ctx context.Context,p runtime.PageRequest)(runtime.Page[%s],error){return c.%s.Scan(ctx,p)}\n", n, n, lo)
+	fmt.Fprintf(b, "func (c *Client) Scan%sWithOptions(ctx context.Context,o runtime.ScanOptions)(runtime.Page[%s],error){return c.%s.ScanWithOptions(ctx,o)}\n", n, n, lo)
+	fmt.Fprintf(b, "func (c *Client) Update%s(ctx context.Context,k %s,p %sUpdate)error{return c.Update%sWithOptions(ctx,k,p,runtime.WriteOptions{})}\n", n, key, n, n)
+	fmt.Fprintf(b, "func (c *Client) Update%sWithOptions(ctx context.Context,k %s,p %sUpdate,options runtime.WriteOptions)error{set,remove,err:=encode%sUpdate(p);if err!=nil{return err};return c.%s.UpdateWithOptions(ctx,k,set,remove,options,%s)}\n", n, key, n, n, lo, keyNames(m))
+	fmt.Fprintf(b, "func (c *Client) Update%sReturning(ctx context.Context,k %s,p %sUpdate,options ...runtime.WriteOptions)(%s,error){var o runtime.WriteOptions;if len(options)>0{o=options[0]};set,remove,err:=encode%sUpdate(p);if err!=nil{return %s{},err};return c.%s.UpdateReturning(ctx,k,set,remove,o,%s)}\n", n, key, n, n, n, n, lo, keyNames(m))
+	fmt.Fprintf(b, "func (c *Client) Read%s(k %s,dst *%s)(runtime.ReadItem,error){return runtime.Read(c.%s,k,dst)}\n", n, key, n, lo)
+	fmt.Fprintf(b, "func (c *Client) Write%s(v %s)(runtime.WriteItem,error){return c.%s.PutOperation(v)}\n", n, n, lo)
+	fmt.Fprintf(b, "func (c *Client) Write%sWithOptions(v %s,options runtime.WriteOptions)(runtime.WriteItem,error){return c.%s.PutOperationWithOptions(v,options)}\n", n, n, lo)
+	fmt.Fprintf(b, "func (c *Client) Create%sOperation(v %s,options ...runtime.WriteOptions)(runtime.WriteItem,error){var o runtime.WriteOptions;if len(options)>0{o=options[0]};return c.%s.CreateOperation(v,o)}\n", n, n, lo)
+	fmt.Fprintf(b, "func (c *Client) Delete%sOperation(k %s)(runtime.WriteItem,error){return c.%s.DeleteOperation(k)}\n", n, key, lo)
+	fmt.Fprintf(b, "func (c *Client) Delete%sOperationWithOptions(k %s,o runtime.WriteOptions)(runtime.WriteItem,error){return c.%s.DeleteOperationWithOptions(k,o)}\n", n, key, lo)
+	fmt.Fprintf(b, "func (c *Client) Update%sOperation(k %s,p %sUpdate)(runtime.WriteItem,error){return c.Update%sOperationWithOptions(k,p,runtime.WriteOptions{})}\n", n, key, n, n)
+	fmt.Fprintf(b, "func (c *Client) Update%sOperationWithOptions(k %s,p %sUpdate,o runtime.WriteOptions)(runtime.WriteItem,error){set,remove,err:=encode%sUpdate(p);if err!=nil{return runtime.WriteItem{},err};return c.%s.UpdateOperationWithOptions(k,set,remove,o,%s)}\n", n, key, n, n, lo, keyNames(m))
 	for _, ix := range queryIndexes(m) {
-		part := goName(ix.Partition)
-		fn := "Query" + n + "By" + part
+		fn := "Query" + n + "By" + goName(ix.Partition)
 		if ix.Kind != "TABLE" {
 			fn = "Query" + n + "Using" + goName(ix.Name)
 		}
-		var conditionType string
+		var sortType string
 		if ix.Sort != "" {
-			conditionType = n + goName(ix.Name) + "Sort"
-			fmt.Fprintf(b, "\ntype %s struct { Operator runtime.Operator; Value %s }\n", conditionType, baseType(m.Field(ix.Sort), s))
+			sortType = n + goName(ix.Name) + "Sort"
+			fmt.Fprintf(b, "\ntype %s struct{Operator runtime.Operator;Value %s}\n", sortType, baseType(m.Field(ix.Sort), s))
 		}
 		fmt.Fprintf(b, "\nfunc (c *Client) %s(ctx context.Context,value %s", fn, baseType(m.Field(ix.Partition), s))
 		if ix.Sort != "" {
-			fmt.Fprintf(b, ", sort *%s", conditionType)
+			fmt.Fprintf(b, ",sort *%s", sortType)
 		}
-		fmt.Fprintf(b, ", page runtime.PageRequest) (runtime.Page[%s],error) {\n\tq:=runtime.QueryRequest{IndexName:%s,PartitionName:%s,PartitionValue:value,SortName:%s,Page:page}\n", n, quoteIndex(m, ix), strconv.Quote(ix.Partition), strconv.Quote(ix.Sort))
+		fmt.Fprintf(b, ",page runtime.PageRequest)(runtime.Page[%s],error){q:=runtime.QueryRequest{IndexName:%s,PartitionName:%s,PartitionValue:value,SortName:%s,Page:page,GlobalIndex:%t}\n", n, quoteIndex(m, ix), strconv.Quote(ix.Partition), strconv.Quote(ix.Sort), ix.Kind == "GSI")
 		if ix.Sort != "" {
-			fmt.Fprintln(b, "\tif sort!=nil {q.Sort=&runtime.Condition{Operator:sort.Operator,Value:sort.Value}}")
+			fmt.Fprintln(b, "if sort!=nil{q.Sort=&runtime.Condition{Operator:sort.Operator,Value:sort.Value}}")
 		}
-		fmt.Fprintf(b, "\treturn c.%s.Query(ctx,q)\n}\n", lo)
+		fmt.Fprintf(b, "return c.%s.Query(ctx,q)}\n", lo)
 	}
 }
+
 func generateRelation(b *bytes.Buffer, m schema.Model, r schema.Relation, s *schema.Schema) {
 	target := s.Model(r.Target)
 	if target == nil {
@@ -338,7 +411,7 @@ func generateRelation(b *bytes.Buffer, m schema.Model, r schema.Relation, s *sch
 	local := goName(r.Local)
 	if r.Many {
 		ix := findRelationIndex(target, r)
-		fmt.Fprintf(b, "\trelated,err:=c.%s.Query(ctx,runtime.QueryRequest{IndexName:%s,PartitionName:%s,PartitionValue:value.%s,SortName:%s,Page:page});if err!=nil{return %s{},err};result.%s=related\n", lowerFirst(z), strconv.Quote(ix.Name), strconv.Quote(r.Remote), local, strconv.Quote(ix.Sort), res, field)
+		fmt.Fprintf(b, "\trelated,err:=c.%s.Query(ctx,runtime.QueryRequest{IndexName:%s,PartitionName:%s,PartitionValue:value.%s,SortName:%s,Page:page,GlobalIndex:%t});if err!=nil{return %s{},err};result.%s=related\n", lowerFirst(z), strconv.Quote(ix.Name), strconv.Quote(r.Remote), local, strconv.Quote(ix.Sort), ix.Kind == "GSI", res, field)
 	} else {
 		if r.Optional {
 			fmt.Fprintf(b, "\tif value.%s==nil{return result,nil}\n", local)
@@ -424,6 +497,8 @@ func baseType(f *schema.Field, s *schema.Schema) string {
 		return "time.Time"
 	case "Bytes":
 		return "[]byte"
+	case "Json":
+		return "runtime.JSON"
 	}
 	return goName(f.Type)
 }

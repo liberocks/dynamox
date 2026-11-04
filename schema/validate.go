@@ -7,7 +7,7 @@ import (
 	"unicode"
 )
 
-var scalarTypes = map[string]bool{"String": true, "Int": true, "Float": true, "Boolean": true, "DateTime": true, "Bytes": true}
+var scalarTypes = map[string]bool{"String": true, "Int": true, "Float": true, "Boolean": true, "DateTime": true, "Bytes": true, "Json": true}
 
 func Validate(s *Schema) []Diagnostic {
 	var ds []Diagnostic
@@ -16,7 +16,7 @@ func Validate(s *Schema) []Diagnostic {
 		add(Position{1, 1}, "schema must declare at least one model")
 	}
 	models := map[string]*Model{}
-	tables := map[string]Position{}
+	tables := map[string][]Model{}
 	types := map[string]Composite{}
 	enums := map[string]Enum{}
 	for i := range s.Models {
@@ -136,9 +136,14 @@ func Validate(s *Schema) []Diagnostic {
 		} else if usesSerial && m.Table == "dynamox_sequences" {
 			add(m.Pos, "table name dynamox_sequences is reserved for serial ID generation")
 		} else if previous, ok := tables[m.Table]; ok {
-			add(m.Pos, fmt.Sprintf("table %q is already assigned at %d:%d", m.Table, previous.Line, previous.Column))
+			for _, model := range previous {
+				if msg := sharedTableConflict(model, m, s); msg != "" {
+					add(m.Pos, fmt.Sprintf("table %q conflicts with model %s: %s", m.Table, model.Name, msg))
+				}
+			}
+			tables[m.Table] = append(previous, m)
 		} else {
-			tables[m.Table] = m.Pos
+			tables[m.Table] = []Model{m}
 		}
 		validateCapacityPair(add, m.ReadCapacityUnits, m.WriteCapacityUnits, m.Pos, "table")
 		if m.TTLCount > 1 {
@@ -220,20 +225,29 @@ func Validate(s *Schema) []Diagnostic {
 				}
 				continue
 			}
-			if scalarTypes[f.Type] {
+			if f.Type == "Json" {
+				if hasAttr(f, "jsonString") || hasAttr(f, "document") {
+					add(f.Pos, "Json fields do not use @jsonString or @document")
+				}
+			} else if scalarTypes[f.Type] {
 				if hasAttr(f, "jsonString") {
 					add(f.Pos, "@jsonString requires a named type or enum")
+				}
+				if hasAttr(f, "document") {
+					add(f.Pos, "@document requires a named type")
 				}
 			} else if _, ok := types[f.Type]; !ok {
 				if _, ok := enums[f.Type]; !ok {
 					add(f.Pos, "unknown field type "+f.Type)
+				} else if hasAttr(f, "document") || hasAttr(f, "jsonString") {
+					add(f.Pos, "enum fields cannot use @document or @jsonString")
 				}
-			} else if hasAttr(f, "jsonString") == false {
-				add(f.Pos, "composite field "+f.Name+" must use @jsonString")
+			} else if hasAttr(f, "jsonString") == hasAttr(f, "document") {
+				add(f.Pos, "composite field "+f.Name+" must use exactly one of @jsonString or @document")
 			}
 			for _, a := range f.Attributes {
 				switch a.Name {
-				case "partitionKey", "sortKey", "id", "jsonString":
+				case "partitionKey", "sortKey", "id", "jsonString", "document":
 					if len(a.Args) > 0 {
 						add(a.Pos, "@"+a.Name+" does not accept arguments")
 					}
@@ -377,15 +391,17 @@ func Validate(s *Schema) []Diagnostic {
 				add(f.Pos, "duplicate field "+f.Name)
 			}
 			seen[f.Name] = true
-			if !scalarTypes[f.Type] {
+			if f.Type != "Json" && !scalarTypes[f.Type] {
 				if _, ok := enums[f.Type]; !ok {
 					if _, ok := types[f.Type]; !ok {
 						add(f.Pos, "unknown JSON field type "+f.Type)
 					}
 				}
 			}
-			if len(f.Attributes) > 0 {
-				add(f.Pos, "attributes are not supported on JSON type fields")
+			for _, a := range f.Attributes {
+				if a.Name != "document" || len(a.Args) > 0 || scalarTypes[f.Type] {
+					add(a.Pos, "only nested composite fields may use @document")
+				}
 			}
 		}
 	}
@@ -418,6 +434,35 @@ func Validate(s *Schema) []Diagnostic {
 	}
 	for name := range types {
 		visit(name)
+	}
+	for _, m := range s.Models {
+		for _, f := range m.Fields {
+			if !hasAttr(f, "document") {
+				continue
+			}
+			active := map[string]bool{}
+			var hasCycle func(string) bool
+			hasCycle = func(name string) bool {
+				if active[name] {
+					return true
+				}
+				active[name] = true
+				defer delete(active, name)
+				typ, ok := types[name]
+				if !ok {
+					return false
+				}
+				for _, child := range typ.Fields {
+					if _, ok := types[child.Type]; ok && hasCycle(child.Type) {
+						return true
+					}
+				}
+				return false
+			}
+			if hasCycle(f.Type) {
+				add(f.Pos, "@document cannot contain recursive named types")
+			}
+		}
 	}
 	sort.SliceStable(ds, func(i, j int) bool {
 		if ds[i].Position.Line == ds[j].Position.Line {
@@ -453,7 +498,7 @@ func validKeyField(f *Field, s *Schema) bool {
 		return false
 	}
 	if scalarTypes[f.Type] {
-		return f.Type != "Boolean"
+		return f.Type != "Boolean" && f.Type != "Json"
 	}
 	for _, e := range s.Enums {
 		if e.Name == f.Type {
@@ -461,6 +506,80 @@ func validKeyField(f *Field, s *Schema) bool {
 		}
 	}
 	return false
+}
+
+func sharedTableConflict(a, b Model, s *Schema) string {
+	keyType := func(m Model, name string) string {
+		f := m.Field(name)
+		if f == nil {
+			return ""
+		}
+		switch f.Type {
+		case "Int", "Float":
+			return "N"
+		case "Bytes":
+			return "B"
+		case "String", "DateTime":
+			return "S"
+		default:
+			for _, e := range s.Enums {
+				if e.Name == f.Type {
+					return "S"
+				}
+			}
+			return f.Type
+		}
+	}
+	if a.Partition != b.Partition || keyType(a, a.Partition) != keyType(b, b.Partition) {
+		return "primary partition keys differ"
+	}
+	if a.Sort != b.Sort || (a.Sort != "" && keyType(a, a.Sort) != keyType(b, b.Sort)) {
+		return "primary sort keys differ"
+	}
+	if capacityValue(a.ReadCapacityUnits) != capacityValue(b.ReadCapacityUnits) || capacityValue(a.WriteCapacityUnits) != capacityValue(b.WriteCapacityUnits) {
+		return "table capacity declarations differ"
+	}
+	if a.TTL != "" && b.TTL != "" && a.TTL != b.TTL {
+		return "TTL attributes differ"
+	}
+	byName := map[string]Index{}
+	for _, ix := range a.Indexes {
+		if ix.Kind == "" {
+			ix.Kind = "GSI"
+		}
+		byName[ix.Name] = ix
+	}
+	for _, ix := range b.Indexes {
+		if ix.Kind == "" {
+			ix.Kind = "GSI"
+		}
+		if old, ok := byName[ix.Name]; ok {
+			if old.Kind != ix.Kind || old.Partition != ix.Partition || old.Sort != ix.Sort || capacityValue(old.ReadCapacityUnits) != capacityValue(ix.ReadCapacityUnits) || capacityValue(old.WriteCapacityUnits) != capacityValue(ix.WriteCapacityUnits) {
+				return "index " + ix.Name + " declarations differ"
+			}
+		}
+	}
+	for _, ix := range a.Indexes {
+		for _, key := range []string{ix.Partition, ix.Sort} {
+			if key != "" && b.Field(key) != nil && keyType(a, key) != keyType(b, key) {
+				return "index " + ix.Name + " key attribute " + key + " has incompatible types"
+			}
+		}
+	}
+	for _, ix := range b.Indexes {
+		for _, key := range []string{ix.Partition, ix.Sort} {
+			if key != "" && a.Field(key) != nil && keyType(a, key) != keyType(b, key) {
+				return "index " + ix.Name + " key attribute " + key + " has incompatible types"
+			}
+		}
+	}
+	return ""
+}
+func capacityValue(v *int64) int64 {
+	if v == nil {
+		return 0
+	}
+	return *v
 }
 func goIdentifier(name string) string {
 	parts := strings.FieldsFunc(name, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })

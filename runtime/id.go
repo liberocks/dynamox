@@ -130,8 +130,13 @@ func formatUUID(value [16]byte) string {
 // NextSerial allocates a process-independent, monotonically increasing Int ID
 // by atomically incrementing the named counter in the sequence table.
 func NextSerial(ctx context.Context, db DynamoAPI, sequenceName string) (int64, error) {
+	return NextSerialWithTable(ctx, db, SequenceTableName, sequenceName)
+}
+
+// NextSerialWithTable is NextSerial with an explicit physical counter table.
+func NextSerialWithTable(ctx context.Context, db DynamoAPI, tableName, sequenceName string) (int64, error) {
 	out, err := db.UpdateItem(ctx, &dynamodb.UpdateItemInput{
-		TableName:                 aws.String(SequenceTableName),
+		TableName:                 aws.String(tableName),
 		Key:                       map[string]types.AttributeValue{"name": StringKey(sequenceName)},
 		UpdateExpression:          aws.String("ADD #value :one"),
 		ExpressionAttributeNames:  map[string]string{"#value": "value"},

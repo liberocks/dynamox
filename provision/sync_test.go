@@ -80,6 +80,51 @@ func TestSyncPropagatesDescribeErrors(t *testing.T) {
 	}
 }
 
+func TestSyncMergesSharedTableDeclarationsOnce(t *testing.T) {
+	db := &provisionFake{missing: true}
+	common := Key{Name: "id", Type: types.ScalarAttributeTypeS, Kind: types.KeyTypeHash}
+	a := Table{Name: "shared", Partition: common, Indexes: []Index{{Name: "ByEmail", Partition: Key{Name: "email", Type: types.ScalarAttributeTypeS}}}}
+	b := Table{Name: "shared", Partition: common, Indexes: []Index{{Name: "ByCreated", Partition: Key{Name: "created", Type: types.ScalarAttributeTypeS}}}}
+	created, err := Sync(context.Background(), db, []Table{a, b})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(created) != 1 || db.create == nil || len(db.create.GlobalSecondaryIndexes) != 2 {
+		t.Fatalf("shared table was not reconciled once with both indexes: created=%v input=%#v", created, db.create)
+	}
+	b.Partition = Key{Name: "other", Type: types.ScalarAttributeTypeS}
+	if _, err := mergeTables([]Table{a, b}); err == nil {
+		t.Fatal("conflicting shared key declarations should fail")
+	}
+	if _, err := Sync(context.Background(), &provisionFake{}, []Table{a, b}); err == nil {
+		t.Fatal("Sync should return conflicting shared key declarations")
+	}
+	b = a
+	b.Indexes = []Index{{Name: "ByEmail", Partition: Key{Name: "different", Type: types.ScalarAttributeTypeS}}}
+	if _, err := mergeTables([]Table{a, b}); err == nil {
+		t.Fatal("conflicting shared index declarations should fail")
+	}
+	b = a
+	b.TTL = "expires"
+	a.TTL = "other"
+	if _, err := mergeTables([]Table{a, b}); err == nil {
+		t.Fatal("conflicting shared TTL declarations should fail")
+	}
+	b = a
+	b.ReadCapacityUnits = 1
+	if _, err := mergeTables([]Table{a, b}); err == nil {
+		t.Fatal("conflicting shared capacity declarations should fail")
+	}
+	ordered, err := mergeTables([]Table{{Name: "a", Partition: common}, {Name: "b", Partition: common}})
+	if err != nil || len(ordered) != 2 || ordered[0].Name != "a" || ordered[1].Name != "b" {
+		t.Fatalf("distinct physical tables were not sorted deterministically: %#v err=%v", ordered, err)
+	}
+	ordered, err = mergeTables([]Table{{Name: "b", Partition: common}, {Name: "a", Partition: common}})
+	if err != nil || len(ordered) != 2 || ordered[0].Name != "a" || ordered[1].Name != "b" {
+		t.Fatalf("reversed physical tables were not sorted deterministically: %#v err=%v", ordered, err)
+	}
+}
+
 type errorDescribe struct{ err error }
 
 func (f *errorDescribe) DescribeTable(context.Context, *dynamodb.DescribeTableInput, ...func(*dynamodb.Options)) (*dynamodb.DescribeTableOutput, error) {

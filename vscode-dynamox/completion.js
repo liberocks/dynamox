@@ -1,6 +1,6 @@
 "use strict";
 
-const scalarTypes = ["String", "Int", "Float", "Boolean", "DateTime", "Bytes"];
+const scalarTypes = ["String", "Int", "Float", "Boolean", "DateTime", "Bytes", "Json"];
 
 function complete(text, offset) {
   const before = text.slice(0, offset);
@@ -124,8 +124,10 @@ function complete(text, offset) {
       if (isPartitionKey && (fieldType === "String" || fieldType === "Int")) attrs.push("@default");
     } else if (block.kind === "model" && models.some((model) => model.name === fieldType)) {
       attrs = ["@relation"];
-    } else if (block.kind === "model" && [...types, ...enums].some((type) => type.name === fieldType)) {
-      attrs = ["@jsonString"];
+    } else if (block.kind === "model" && types.some((type) => type.name === fieldType)) {
+      attrs = ["@jsonString", "@document"];
+    } else if (block.kind === "type" && types.some((type) => type.name === fieldType)) {
+      attrs = ["@document"];
     }
     for (const attr of attrs) add(attr, attr, "Field attribute", "attribute");
     return completions;
