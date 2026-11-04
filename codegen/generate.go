@@ -102,12 +102,15 @@ func Generate(s *schema.Schema, packageName string) ([]byte, error) {
 		fmt.Fprintln(&b, "}")
 		generateCodec(&b, m, s)
 	}
-	fmt.Fprintln(&b, "\ntype Client struct {")
+	fmt.Fprintln(&b, "\ntype Client struct {\n\tidGenerator runtime.IDGenerator")
 	for _, m := range s.Models {
 		fmt.Fprintf(&b, "\t%s runtime.Table[%s,%sKey]\n", lowerFirst(goName(m.Name)), goName(m.Name), goName(m.Name))
 	}
 	fmt.Fprintln(&b, "}")
-	fmt.Fprintln(&b, "\nfunc NewClient(db runtime.DynamoAPI) *Client {\n\tc := &Client{}")
+	fmt.Fprintln(&b, "\nfunc NewClient(db runtime.DynamoAPI) *Client { return NewClientWithIDGenerator(db,runtime.GenerateID) }")
+	fmt.Fprintln(&b, "func NewClientWithIDGenerator(db runtime.DynamoAPI,generateID runtime.IDGenerator) *Client {")
+	fmt.Fprintln(&b, "\tif generateID==nil { generateID=runtime.GenerateID }")
+	fmt.Fprintln(&b, "\tc := &Client{idGenerator:generateID}")
 	for _, m := range s.Models {
 		n := lowerFirst(goName(m.Name))
 		fmt.Fprintf(&b, "\tc.%s = runtime.Table[%s,%sKey]{DB:db,Name:%s,PartitionName:%s,SortName:%s,Codec:runtime.Codec[%s]{Encode:encode%s,Decode:decode%s},Key:key%s}\n", n, goName(m.Name), goName(m.Name), strconv.Quote(m.Table), strconv.Quote(m.Partition), strconv.Quote(m.Sort), goName(m.Name), goName(m.Name), goName(m.Name), goName(m.Name))
@@ -220,7 +223,16 @@ func generateMethods(b *bytes.Buffer, m schema.Model, s *schema.Schema) {
 	n := goName(m.Name)
 	lo := lowerFirst(n)
 	key := n + "Key"
-	fmt.Fprintf(b, "\nfunc (c *Client) Create%s(ctx context.Context,v %s) error { return c.%s.Create(ctx,v) }\n", n, n, lo)
+	fmt.Fprintf(b, "\nfunc (c *Client) Create%s(ctx context.Context,v %s) (%s,error) {\n", n, n, n)
+	if id := m.Field(m.Partition); id != nil && id.Default != "" {
+		field := goName(id.Name)
+		if id.Default == "serial" {
+			fmt.Fprintf(b, "\tif v.%s==0 {id,err:=runtime.NextSerial(ctx,c.db(),%s);if err!=nil{return %s{},err};v.%s=id}\n", field, strconv.Quote(m.Table), n, field)
+		} else {
+			fmt.Fprintf(b, "\tif v.%s==\"\" {id,err:=c.idGenerator(%s);if err!=nil{return %s{},err};v.%s=id}\n", field, strconv.Quote(id.Default), n, field)
+		}
+	}
+	fmt.Fprintf(b, "\tif err:=c.%s.Create(ctx,v);err!=nil{return %s{},err};return v,nil\n}\n", lo, n)
 	fmt.Fprintf(b, "func (c *Client) Get%s(ctx context.Context,k %s) (%s,bool,error) { return c.%s.Get(ctx,k) }\n", n, key, n, lo)
 	fmt.Fprintf(b, "func (c *Client) Delete%s(ctx context.Context,k %s) error { return c.%s.Delete(ctx,k) }\n", n, key, lo)
 	fmt.Fprintf(b, "func (c *Client) Scan%s(ctx context.Context,p runtime.PageRequest) (runtime.Page[%s],error) { return c.%s.Scan(ctx,p) }\n", n, n, lo)

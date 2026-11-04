@@ -212,15 +212,60 @@ func decodePost(item map[string]types.AttributeValue) (Post, error) {
 	return out, nil
 }
 
-type Client struct {
-	user runtime.Table[User, UserKey]
-	post runtime.Table[Post, PostKey]
+type SequenceItem struct {
+	ID    int64  `json:"id" dynamodbav:"id"`
+	Value string `json:"value" dynamodbav:"value"`
 }
 
-func NewClient(db runtime.DynamoAPI) *Client {
-	c := &Client{}
+type SequenceItemKey struct {
+	ID int64
+}
+
+type SequenceItemUpdate struct {
+	SetValue *string
+}
+
+func keySequenceItem(k SequenceItemKey) (map[string]types.AttributeValue, error) {
+	key := map[string]types.AttributeValue{}
+	av, _ := attributevalue.Marshal(k.ID)
+	key["id"] = av
+	return key, nil
+}
+
+func encodeSequenceItem(v SequenceItem) (map[string]types.AttributeValue, error) {
+	plain := v
+	item, _ := attributevalue.MarshalMap(plain)
+	return item, nil
+}
+
+func decodeSequenceItem(item map[string]types.AttributeValue) (SequenceItem, error) {
+	plain := make(map[string]types.AttributeValue, len(item))
+	for k, v := range item {
+		plain[k] = v
+	}
+	var out SequenceItem
+	if err := attributevalue.UnmarshalMap(plain, &out); err != nil {
+		return out, err
+	}
+	return out, nil
+}
+
+type Client struct {
+	idGenerator  runtime.IDGenerator
+	user         runtime.Table[User, UserKey]
+	post         runtime.Table[Post, PostKey]
+	sequenceItem runtime.Table[SequenceItem, SequenceItemKey]
+}
+
+func NewClient(db runtime.DynamoAPI) *Client { return NewClientWithIDGenerator(db, runtime.GenerateID) }
+func NewClientWithIDGenerator(db runtime.DynamoAPI, generateID runtime.IDGenerator) *Client {
+	if generateID == nil {
+		generateID = runtime.GenerateID
+	}
+	c := &Client{idGenerator: generateID}
 	c.user = runtime.Table[User, UserKey]{DB: db, Name: "users", PartitionName: "id", SortName: "", Codec: runtime.Codec[User]{Encode: encodeUser, Decode: decodeUser}, Key: keyUser}
 	c.post = runtime.Table[Post, PostKey]{DB: db, Name: "posts", PartitionName: "id", SortName: "", Codec: runtime.Codec[Post]{Encode: encodePost, Decode: decodePost}, Key: keyPost}
+	c.sequenceItem = runtime.Table[SequenceItem, SequenceItemKey]{DB: db, Name: "sequence_items", PartitionName: "id", SortName: "", Codec: runtime.Codec[SequenceItem]{Encode: encodeSequenceItem, Decode: decodeSequenceItem}, Key: keySequenceItem}
 	return c
 }
 
@@ -234,7 +279,19 @@ func (c *Client) db() runtime.DynamoAPI {
 	return c.user.DB
 }
 
-func (c *Client) CreateUser(ctx context.Context, v User) error { return c.user.Create(ctx, v) }
+func (c *Client) CreateUser(ctx context.Context, v User) (User, error) {
+	if v.ID == "" {
+		id, err := c.idGenerator("uuidv7")
+		if err != nil {
+			return User{}, err
+		}
+		v.ID = id
+	}
+	if err := c.user.Create(ctx, v); err != nil {
+		return User{}, err
+	}
+	return v, nil
+}
 func (c *Client) GetUser(ctx context.Context, k UserKey) (User, bool, error) {
 	return c.user.Get(ctx, k)
 }
@@ -347,7 +404,19 @@ func (c *Client) QueryUserByID(ctx context.Context, value string, page runtime.P
 	return c.user.Query(ctx, q)
 }
 
-func (c *Client) CreatePost(ctx context.Context, v Post) error { return c.post.Create(ctx, v) }
+func (c *Client) CreatePost(ctx context.Context, v Post) (Post, error) {
+	if v.ID == "" {
+		id, err := c.idGenerator("objectid")
+		if err != nil {
+			return Post{}, err
+		}
+		v.ID = id
+	}
+	if err := c.post.Create(ctx, v); err != nil {
+		return Post{}, err
+	}
+	return v, nil
+}
 func (c *Client) GetPost(ctx context.Context, k PostKey) (Post, bool, error) {
 	return c.post.Get(ctx, k)
 }
@@ -447,6 +516,61 @@ func (c *Client) QueryPostUsingByAuthor(ctx context.Context, value string, sort 
 		q.Sort = &runtime.Condition{Operator: sort.Operator, Value: sort.Value}
 	}
 	return c.post.Query(ctx, q)
+}
+
+func (c *Client) CreateSequenceItem(ctx context.Context, v SequenceItem) (SequenceItem, error) {
+	if v.ID == 0 {
+		id, err := runtime.NextSerial(ctx, c.db(), "sequence_items")
+		if err != nil {
+			return SequenceItem{}, err
+		}
+		v.ID = id
+	}
+	if err := c.sequenceItem.Create(ctx, v); err != nil {
+		return SequenceItem{}, err
+	}
+	return v, nil
+}
+func (c *Client) GetSequenceItem(ctx context.Context, k SequenceItemKey) (SequenceItem, bool, error) {
+	return c.sequenceItem.Get(ctx, k)
+}
+func (c *Client) DeleteSequenceItem(ctx context.Context, k SequenceItemKey) error {
+	return c.sequenceItem.Delete(ctx, k)
+}
+func (c *Client) ScanSequenceItem(ctx context.Context, p runtime.PageRequest) (runtime.Page[SequenceItem], error) {
+	return c.sequenceItem.Scan(ctx, p)
+}
+func (c *Client) UpdateSequenceItem(ctx context.Context, k SequenceItemKey, p SequenceItemUpdate) error {
+	set := map[string]types.AttributeValue{}
+	remove := []string{}
+	if p.SetValue != nil {
+		av, _ := attributevalue.Marshal(*p.SetValue)
+		set["value"] = av
+	}
+	return c.sequenceItem.Update(ctx, k, set, remove, "id")
+}
+func (c *Client) ReadSequenceItem(k SequenceItemKey, dst *SequenceItem) (runtime.ReadItem, error) {
+	return runtime.Read(c.sequenceItem, k, dst)
+}
+func (c *Client) WriteSequenceItem(v SequenceItem) (runtime.WriteItem, error) {
+	return c.sequenceItem.PutOperation(v)
+}
+func (c *Client) DeleteSequenceItemOperation(k SequenceItemKey) (runtime.WriteItem, error) {
+	return c.sequenceItem.DeleteOperation(k)
+}
+func (c *Client) UpdateSequenceItemOperation(k SequenceItemKey, p SequenceItemUpdate) (runtime.WriteItem, error) {
+	set := map[string]types.AttributeValue{}
+	remove := []string{}
+	if p.SetValue != nil {
+		av, _ := attributevalue.Marshal(*p.SetValue)
+		set["value"] = av
+	}
+	return c.sequenceItem.UpdateOperation(k, set, remove, "id")
+}
+
+func (c *Client) QuerySequenceItemByID(ctx context.Context, value int64, page runtime.PageRequest) (runtime.Page[SequenceItem], error) {
+	q := runtime.QueryRequest{IndexName: "", PartitionName: "id", PartitionValue: value, SortName: "", Page: page}
+	return c.sequenceItem.Query(ctx, q)
 }
 
 type UserWithPosts struct {

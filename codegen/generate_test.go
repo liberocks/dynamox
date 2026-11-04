@@ -115,3 +115,25 @@ func TestGeneratorHelperEdgeCases(t *testing.T) {
 		t.Fatal("missing relation target should be ignored")
 	}
 }
+
+func TestGenerateEmitsConfiguredIDStrategies(t *testing.T) {
+	src := `model V1 { id String @id @default(uuidv1) @@table(name: "v1") }
+model V4 { id String @id @default(uuidv4) @@table(name: "v4") }
+model V7 { id String @id @default(uuidv7) @@table(name: "v7") }
+model Object { id String @id @default(objectid) @@table(name: "objects") }
+model Serial { id Int @id @default(serial) @@table(name: "serials") }`
+	s, err := schema.Parse(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated, err := Generate(s, "idgen")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(generated)
+	for _, want := range []string{`c.idGenerator("uuidv1")`, `c.idGenerator("uuidv4")`, `c.idGenerator("uuidv7")`, `c.idGenerator("objectid")`, `runtime.NextSerial(ctx, c.db(), "serials")`, `func NewClientWithIDGenerator`} {
+		if !strings.Contains(text, want) {
+			t.Errorf("generated output missing %q", want)
+		}
+	}
+}

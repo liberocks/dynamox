@@ -3,6 +3,7 @@ package dynamoxgen
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -27,6 +28,7 @@ type generatedDynamo struct {
 	lastDelete                                                                        *dynamodb.DeleteItemInput
 	lastRead                                                                          *dynamodb.TransactGetItemsInput
 	lastWrite                                                                         *dynamodb.TransactWriteItemsInput
+	serialValue                                                                       int64
 }
 
 func (d *generatedDynamo) GetItem(_ context.Context, in *dynamodb.GetItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error) {
@@ -34,10 +36,7 @@ func (d *generatedDynamo) GetItem(_ context.Context, in *dynamodb.GetItemInput, 
 	if err := d.getErrors[table]; err != nil {
 		return nil, err
 	}
-	id := ""
-	if av, ok := in.Key["id"].(*types.AttributeValueMemberS); ok {
-		id = av.Value
-	}
+	id := generatedKeyValue(in.Key["id"])
 	item := d.records[table+"/"+id]
 	return &dynamodb.GetItemOutput{Item: item}, nil
 }
@@ -52,6 +51,10 @@ func (d *generatedDynamo) UpdateItem(_ context.Context, in *dynamodb.UpdateItemI
 	d.lastUpdate = in
 	if d.updateErr != nil {
 		return nil, d.updateErr
+	}
+	if aws.ToString(in.TableName) == runtime.SequenceTableName {
+		d.serialValue++
+		return &dynamodb.UpdateItemOutput{Attributes: map[string]types.AttributeValue{"value": &types.AttributeValueMemberN{Value: strconv.FormatInt(d.serialValue, 10)}}}, nil
 	}
 	return &dynamodb.UpdateItemOutput{}, nil
 }
@@ -84,10 +87,7 @@ func (d *generatedDynamo) TransactGetItems(_ context.Context, in *dynamodb.Trans
 	out := &dynamodb.TransactGetItemsOutput{}
 	for _, tx := range in.TransactItems {
 		table := aws.ToString(tx.Get.TableName)
-		id := ""
-		if av, ok := tx.Get.Key["id"].(*types.AttributeValueMemberS); ok {
-			id = av.Value
-		}
+		id := generatedKeyValue(tx.Get.Key["id"])
 		out.Responses = append(out.Responses, types.ItemResponse{Item: d.records[table+"/"+id]})
 	}
 	return out, nil
@@ -102,6 +102,15 @@ func (d *generatedDynamo) TransactWriteItems(_ context.Context, in *dynamodb.Tra
 
 func newGeneratedDynamo() *generatedDynamo {
 	return &generatedDynamo{records: map[string]map[string]types.AttributeValue{}, getErrors: map[string]error{}, queryItems: map[string][]map[string]types.AttributeValue{}, scanItems: map[string][]map[string]types.AttributeValue{}}
+}
+func generatedKeyValue(av types.AttributeValue) string {
+	switch v := av.(type) {
+	case *types.AttributeValueMemberS:
+		return v.Value
+	case *types.AttributeValueMemberN:
+		return v.Value
+	}
+	return ""
 }
 func setGeneratedRecord(t *testing.T, d *generatedDynamo, table, id string, item map[string]types.AttributeValue) {
 	t.Helper()
@@ -124,9 +133,20 @@ func generatedPost(t *testing.T, id, author string, editor *string) map[string]t
 	}
 	return item
 }
+func generatedSequenceItem(t *testing.T, id int64) map[string]types.AttributeValue {
+	t.Helper()
+	item, err := attributevalue.MarshalMap(SequenceItem{ID: id, Value: "sequence"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return item
+}
 func svalue(v string) *string { return &v }
 
 func TestGeneratedCodecsCoverJSONDateTimeAndErrors(t *testing.T) {
+	if _, err := decodeSequenceItem(map[string]types.AttributeValue{"id": &types.AttributeValueMemberM{Value: map[string]types.AttributeValue{}}}); err == nil {
+		t.Fatal("expected sequence ID decode failure")
+	}
 	if _, err := keyUser(UserKey{ID: "u"}); err != nil {
 		t.Fatal(err)
 	}
@@ -220,12 +240,40 @@ func TestGeneratedClientCRUDQueriesAndOperations(t *testing.T) {
 	p := generatedPost(t, "p1", "u1", nil)
 	setGeneratedRecord(t, d, "users", "u1", u)
 	setGeneratedRecord(t, d, "posts", "p1", p)
-	if err := c.CreateUser(ctx, User{ID: "u2", Name: "Bea"}); err != nil {
+	if _, err := c.CreateUser(ctx, User{ID: "u2", Name: "Bea"}); err != nil {
 		t.Fatal(err)
 	}
 	if d.lastPut == nil || aws.ToString(d.lastPut.TableName) != "users" {
 		t.Fatal("CreateUser")
 	}
+	generatedClient := NewClientWithIDGenerator(d, func(strategy string) (string, error) {
+		if strategy != "uuidv7" {
+			t.Fatalf("ID strategy %q", strategy)
+		}
+		return "auto-user", nil
+	})
+	createdUser, err := generatedClient.CreateUser(ctx, User{Name: "Auto"})
+	if err != nil || createdUser.ID != "auto-user" {
+		t.Fatalf("generated user %#v %v", createdUser, err)
+	}
+	createdDefault, err := NewClientWithIDGenerator(d, nil).CreateUser(ctx, User{Name: "Default generator"})
+	if err != nil || createdDefault.ID == "" {
+		t.Fatalf("default generator %#v %v", createdDefault, err)
+	}
+	generatorFailure := errors.New("entropy")
+	_, err = NewClientWithIDGenerator(d, func(string) (string, error) { return "", generatorFailure }).CreateUser(ctx, User{Name: "Failure"})
+	if !errors.Is(err, generatorFailure) {
+		t.Fatalf("ID generation error: %v", err)
+	}
+	_, err = NewClientWithIDGenerator(d, func(string) (string, error) { return "", generatorFailure }).CreatePost(ctx, Post{AuthorID: "u1"})
+	if !errors.Is(err, generatorFailure) {
+		t.Fatalf("ObjectID generation error: %v", err)
+	}
+	d.putErr = errors.New("put user")
+	if _, err := c.CreateUser(ctx, User{ID: "u-error"}); err == nil {
+		t.Fatal("CreateUser should return DynamoDB error")
+	}
+	d.putErr = nil
 	if got, ok, err := c.GetUser(ctx, UserKey{ID: "u1"}); err != nil || !ok || got.Name != "Ada" {
 		t.Fatalf("GetUser %#v %v %v", got, ok, err)
 	}
@@ -272,9 +320,23 @@ func TestGeneratedClientCRUDQueriesAndOperations(t *testing.T) {
 	if d.lastQuery == nil || aws.ToString(d.lastQuery.TableName) != "users" {
 		t.Fatal("QueryUserByID")
 	}
-	if err := c.CreatePost(ctx, Post{ID: "p2", AuthorID: "u1"}); err != nil {
+	if _, err := c.CreatePost(ctx, Post{ID: "p2", AuthorID: "u1"}); err != nil {
 		t.Fatal(err)
 	}
+	createdPost, err := NewClientWithIDGenerator(d, func(strategy string) (string, error) {
+		if strategy != "objectid" {
+			t.Fatalf("ID strategy %q", strategy)
+		}
+		return "0123456789abcdef01234567", nil
+	}).CreatePost(ctx, Post{AuthorID: "u1"})
+	if err != nil || createdPost.ID != "0123456789abcdef01234567" {
+		t.Fatalf("generated post %#v %v", createdPost, err)
+	}
+	d.putErr = errors.New("put post")
+	if _, err := c.CreatePost(ctx, Post{ID: "p-error"}); err == nil {
+		t.Fatal("CreatePost should return DynamoDB error")
+	}
+	d.putErr = nil
 	if got, ok, err := c.GetPost(ctx, PostKey{ID: "p1"}); err != nil || !ok || got.Title != "typed" {
 		t.Fatalf("GetPost %#v %v %v", got, ok, err)
 	}
@@ -379,6 +441,63 @@ func TestGeneratedClientCRUDQueriesAndOperations(t *testing.T) {
 	}
 	if d.lastWrite == nil || len(d.lastWrite.TransactItems) != 9 {
 		t.Fatal("TransactWrite")
+	}
+	seq, err := c.CreateSequenceItem(ctx, SequenceItem{Value: "first"})
+	if err != nil || seq.ID != 1 {
+		t.Fatalf("serial create %#v %v", seq, err)
+	}
+	seq, err = c.CreateSequenceItem(ctx, SequenceItem{ID: 42, Value: "explicit"})
+	if err != nil || seq.ID != 42 || d.serialValue != 1 {
+		t.Fatalf("explicit serial %#v %v count=%d", seq, err, d.serialValue)
+	}
+	setGeneratedRecord(t, d, "sequence_items", "42", generatedSequenceItem(t, 42))
+	d.updateErr = errors.New("sequence update")
+	if _, err := c.CreateSequenceItem(ctx, SequenceItem{Value: "failure"}); err == nil {
+		t.Fatal("serial allocation should return update error")
+	}
+	d.updateErr = nil
+	d.putErr = errors.New("put sequence")
+	if _, err := c.CreateSequenceItem(ctx, SequenceItem{ID: 43, Value: "failure"}); err == nil {
+		t.Fatal("CreateSequence should return DynamoDB error")
+	}
+	d.putErr = nil
+	if got, ok, err := c.GetSequenceItem(ctx, SequenceItemKey{ID: 42}); err != nil || !ok || got.ID != 42 {
+		t.Fatalf("GetSequence %#v %v %v", got, ok, err)
+	}
+	if err := c.DeleteSequenceItem(ctx, SequenceItemKey{ID: 42}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.ScanSequenceItem(ctx, runtime.PageRequest{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.UpdateSequenceItem(ctx, SequenceItemKey{ID: 42}, SequenceItemUpdate{SetValue: svalue("next")}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.QuerySequenceItemByID(ctx, 42, runtime.PageRequest{}); err != nil {
+		t.Fatal(err)
+	}
+	var seqRead SequenceItem
+	readSeq, err := c.ReadSequenceItem(SequenceItemKey{ID: 42}, &seqRead)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeSeq, err := c.WriteSequenceItem(SequenceItem{ID: 44, Value: "write"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	delSeq, err := c.DeleteSequenceItemOperation(SequenceItemKey{ID: 42})
+	if err != nil {
+		t.Fatal(err)
+	}
+	patchSeq, err := c.UpdateSequenceItemOperation(SequenceItemKey{ID: 42}, SequenceItemUpdate{SetValue: svalue("patch")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.TransactGet(ctx, readSeq); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.TransactWrite(ctx, writeSeq, delSeq, patchSeq); err != nil {
+		t.Fatal(err)
 	}
 }
 

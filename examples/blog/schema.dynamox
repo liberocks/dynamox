@@ -8,7 +8,7 @@ type Preferences {
   alternate ThemeOption?
 }
 model User {
-  id String @id
+  id String @id @default(uuidv7)
   name String
   preferences Preferences @jsonString
   settings Preferences @jsonString
@@ -18,7 +18,7 @@ model User {
   @@table(name: "users")
 }
 model Post {
-  id String @id
+  id String @id @default(objectid)
   authorId String
   editorId String?
   title String
@@ -28,4 +28,9 @@ model Post {
   editor User? @relation(fields: [editorId], references: [id])
   @@table(name: "posts")
   @@index(name: "ByAuthor", partition: authorId, sort: createdAt, type: GSI)
+}
+model SequenceItem {
+  id Int @id @default(serial)
+  value String
+  @@table(name: "sequence_items")
 }
