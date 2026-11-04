@@ -47,6 +47,9 @@ model Record {
 	if _, err = Format("bad # token"); err == nil {
 		t.Fatal("format should report lexer error")
 	}
+	if _, err = Format("unknown declaration"); err != nil {
+		t.Fatalf("format should handle an unknown top-level identifier: %v", err)
+	}
 }
 
 func TestParserReportsMalformedTokensAndBlocks(t *testing.T) {
