@@ -97,7 +97,7 @@ jobs:
           test "${coverage}" = "100.0%"
 
       - name: Run emulator benchmarks
-        run: go test -run '^$' -bench '^BenchmarkDynamox' -benchmem -count=1 ./runtime ./examples/blog/dynamoxgen
+        run: go test -run '^$' -bench '^BenchmarkDynamox' -benchmem -count=1 ./runtime ./examples/blog/dynamoxgen ./examples/transaction
 
   dynamodb-local-integration:
     name: DynamoDB Local integration

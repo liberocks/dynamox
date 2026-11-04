@@ -60,11 +60,10 @@ func newBenchmarkClient(b *testing.B) (context.Context, *Client, UserKey, PostKe
 		}
 	})
 
-	client := NewClient(db)
-	// Generated table names come from the example schema; override them with
-	// unique names so benchmark runs never reuse or delete application tables.
-	client.user.Name = userTableName
-	client.post.Name = postTableName
+	client := NewClientWithOptions(db, runtime.ClientOptions{TableNames: map[string]string{
+		"users": userTableName,
+		"posts": postTableName,
+	}})
 
 	userKey := UserKey{ID: "bench-user-" + suffix}
 	postKey := PostKey{ID: "bench-post-" + suffix}
@@ -81,6 +80,40 @@ func newBenchmarkClient(b *testing.B) (context.Context, *Client, UserKey, PostKe
 		b.Fatal(err)
 	}
 	return ctx, client, userKey, postKey, post
+}
+
+func BenchmarkDynamoxGeneratedDocumentCodecs(b *testing.B) {
+	user := User{
+		ID:                  "document-benchmark",
+		Name:                "Benchmark user",
+		Preferences:         Preferences{Theme: "dark"},
+		Settings:            Preferences{Theme: "light"},
+		DocumentPreferences: DocumentMetadata{Source: "benchmark", Provider: runtime.JSON(map[string]any{"ok": true})},
+		ProviderPayload:     runtime.JSON(map[string]any{"items": []any{"text", int64(42), true}}),
+		Payloads:            []runtime.JSON{map[string]any{"kind": "record"}},
+	}
+	item, err := encodeUser(user)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.Run("EncodeNativeDocumentAndJson", func(b *testing.B) {
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			if _, err := encodeUser(user); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("DecodeNativeDocumentAndJson", func(b *testing.B) {
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			if _, err := decodeUser(item); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
 }
 
 func BenchmarkDynamoxGeneratedRelationsAndTransactions(b *testing.B) {
