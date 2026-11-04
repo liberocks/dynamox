@@ -41,7 +41,7 @@ jobs:
 
       - name: Package Linux x64 extension
         working-directory: vscode-dynamox
-        run: npx --yes @vscode/vsce@4.0.2 package --no-dependencies --target linux-x64
+        run: npx --yes @vscode/vsce@4.1.0 package --no-dependencies --target linux-x64
 
   test:
     name: Go tests, coverage, and emulator benchmarks
