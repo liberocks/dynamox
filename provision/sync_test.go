@@ -42,6 +42,14 @@ func TestSyncCreatesMissingTableWithAllProjection(t *testing.T) {
 	if db.create == nil || db.create.BillingMode != types.BillingModePayPerRequest || len(db.create.GlobalSecondaryIndexes) != 1 {
 		t.Fatalf("unexpected create input: %#v", db.create)
 	}
+	if len(db.create.AttributeDefinitions) != 2 {
+		t.Fatalf("expected only the table and index partition keys: %#v", db.create.AttributeDefinitions)
+	}
+	for _, definition := range db.create.AttributeDefinitions {
+		if aws.ToString(definition.AttributeName) == "" || definition.AttributeType == "" {
+			t.Fatalf("empty attribute definition: %#v", definition)
+		}
+	}
 	if db.create.GlobalSecondaryIndexes[0].Projection.ProjectionType != types.ProjectionTypeAll {
 		t.Fatalf("expected ALL projection: %#v", db.create.GlobalSecondaryIndexes[0].Projection)
 	}
