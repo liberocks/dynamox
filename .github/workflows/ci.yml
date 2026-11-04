@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - master
+  push:
+    branches:
+      - master
+
+permissions:
+  records: read
+
+jobs:
+  test:
+    name: Go tests and coverage
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run tests with coverage
+        run: go test -count=1 -coverprofile=coverage.out ./...
+
+      - name: Require 100% statement coverage
+        shell: bash
+        run: |
+          coverage="$(go tool cover -func=coverage.out | awk '$1 == "total:" {print $3}')"
+          echo "Total statement coverage: ${coverage}"
+          test "${coverage}" = "100.0%"
