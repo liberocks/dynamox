@@ -1,0 +1,26 @@
+name: Dynamox version check
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  version-bump:
+    name: Dynamox version is higher than master
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out pull request
+        uses: actions/checkout@v7
+
+      - name: Fetch the current master version
+        run: git fetch --no-tags --depth=1 origin master:refs/remotes/origin/master
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Require a greater Dynamox version
+        run: go run ./tools/versioncheck

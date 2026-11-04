@@ -112,6 +112,8 @@ dynamox sync --profile my-aws-profile --region us-east-1 ./schema.dynamox
 
 Use the same release version for `go get` and `go install` when pinning dynamox in a reproducible application setup. The version-suffixed `go install` installs the CLI without adding its command package to the application's dependencies.
 
+`VERSION` is the Dynamox project version, independent of `vscode-dynamox/package.json`. Every pull request must increase it using strict `MAJOR.MINOR.PATCH` ordering; a major, minor, or patch bump is accepted. The version check runs for every pull request and compares against the latest `master`. When publishing a Go module release, use the matching `v`-prefixed Git tag.
+
 - `fmt` writes canonical indentation and spacing while retaining comments. `fmt --check` exits nonzero if formatting would change the file.
 - `validate` checks schema names, field types, keys, indexes, and relation read paths without contacting AWS.
 - `generate` validates first, then writes `client_gen.go` into the output directory (or to the exact output file when the path is not a directory).
