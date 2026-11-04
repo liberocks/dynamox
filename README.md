@@ -18,7 +18,7 @@ type ThemeOption {
 }
 
 model User {
-  id String @id
+  id String @id @default(uuidv7)
   name String
   preferences Preferences @jsonString
   settings Preferences @jsonString
@@ -29,7 +29,7 @@ model User {
 }
 
 model Post {
-  id String @id
+  id String @id @default(objectid)
   authorId String
   editorId String?
   title String
@@ -41,9 +41,18 @@ model Post {
   @@table(name: "posts")
   @@index(name: "ByAuthor", partition: authorId, sort: createdAt, type: GSI)
 }
+
+model SequenceItem {
+  id Int @id @default(serial)
+  value String
+
+  @@table(name: "sequence_items")
+}
 ```
 
 Supported scalar types are `String`, `Int`, `Float`, `Boolean`, `DateTime`, and `Bytes`. Add `?` for optional fields and `[]` for lists. `DateTime` uses Go `time.Time` and is stored as RFC 3339 text. Named `type` fields marked `@jsonString` are encoded as JSON strings; invalid stored JSON returns a field-specific decode error. Enums are generated as named Go string types.
+
+Primary keys can generate an ID when the field is omitted: `@default(uuidv1)`, `@default(uuidv4)`, `@default(uuidv7)`, and `@default(objectid)` require a `String` key; `@default(serial)` requires an `Int` key. Supplied non-empty string IDs and non-zero integer IDs are preserved. Generated `Create<Model>` methods return `(Model, error)`, so callers receive the generated ID. Integer serial allocation uses atomic DynamoDB updates in the shared `dynamox_sequences` table; `dynamox sync` creates that table automatically when needed. Serial IDs increase per model but can have gaps if a later item write fails. Because zero means “not supplied” for an `Int` key, integer serial IDs cannot be explicitly set to zero.
 
 The relation's `references` field must be the target model's primary partition key for a to-one relation, or a declared target index partition key for a to-many relation. Relation reads are explicit and page through to-many results.
 
@@ -70,6 +79,7 @@ if err != nil { return err }
 client := dynamoxgen.NewClient(dynamodb.NewFromConfig(cfg))
 
 user, found, err := client.GetUser(ctx, dynamoxgen.UserKey{ID: "u-1"})
+created, err := client.CreateUser(ctx, dynamoxgen.User{Name: "New user"}) // created.ID contains a UUIDv7
 page, err := client.QueryPostUsingByAuthor(ctx, "u-1", &dynamoxgen.PostByAuthorSort{
     Operator: runtime.GreaterEqual,
     Value: time.Now().Add(-24 * time.Hour),
@@ -84,6 +94,6 @@ err = client.TransactGet(ctx, readUser)
 err = client.TransactWrite(ctx, writePost)
 ```
 
-Generated CRUD methods include `Create<Model>`, `Get<Model>`, `Update<Model>`, `Delete<Model>`, and paginated `Scan<Model>`. Query methods are emitted only for the table primary key and declared indexes. Update inputs use `Set<Field>` pointers; optional fields also have `Clear<Field>` flags. Transaction helpers compose generated read and write operations with `TransactGet` and `TransactWrite`.
+Generated CRUD methods include `Create<Model>`, `Get<Model>`, `Update<Model>`, `Delete<Model>`, and paginated `Scan<Model>`. `Create<Model>` returns the saved model and any generated key. Query methods are emitted only for the table primary key and declared indexes. Update inputs use `Set<Field>` pointers; optional fields also have `Clear<Field>` flags. Transaction helpers compose generated read and write operations with `TransactGet` and `TransactWrite`.
 
 The module uses AWS SDK for Go v2. The caller supplies the SDK client, so region, credentials, retries, and endpoint configuration remain controlled by the application.
