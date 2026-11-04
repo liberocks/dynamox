@@ -1,0 +1,31 @@
+type ThemeOption {
+  value String
+  next ThemeOption?
+}
+type Preferences {
+  theme String
+  digest Boolean
+  alternate ThemeOption?
+}
+model User {
+  id String @id
+  name String
+  preferences Preferences @jsonString
+  settings Preferences @jsonString
+  optionalPreferences Preferences? @jsonString
+  nickname String?
+  posts Post[] @relation(fields: [id], references: [authorId], index: "ByAuthor")
+  @@table(name: "users")
+}
+model Post {
+  id String @id
+  authorId String
+  editorId String?
+  title String
+  createdAt DateTime
+  editTimes DateTime[]
+  author User @relation(fields: [authorId], references: [id])
+  editor User? @relation(fields: [editorId], references: [id])
+  @@table(name: "posts")
+  @@index(name: "ByAuthor", partition: authorId, sort: createdAt, type: GSI)
+}
