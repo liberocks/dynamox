@@ -36,12 +36,14 @@ model Post {
   editorId String?
   title String
   createdAt DateTime
+  expiresAt Int?
   editTimes DateTime[]
   author User @relation(fields: [authorId], references: [id])
   editor User? @relation(fields: [editorId], references: [id])
 
   @@table(name: "posts")
   @@index(name: "ByAuthor", partition: authorId, sort: createdAt, type: GSI)
+  @@ttl(field: expiresAt)
 }
 
 model SequenceItem {
@@ -57,6 +59,22 @@ Supported scalar types are `String`, `Int`, `Float`, `Boolean`, `DateTime`, and 
 Primary keys can generate an ID when the field is omitted: `@default(uuidv1)`, `@default(uuidv4)`, `@default(uuidv7)`, and `@default(objectid)` require a `String` key; `@default(serial)` requires an `Int` key. Supplied non-empty string IDs and non-zero integer IDs are preserved. Generated `Create<Model>` methods return `(Model, error)`, so callers receive the generated ID. Integer serial allocation uses atomic DynamoDB updates in the shared `dynamox_sequences` table; `dynamox sync` creates that table automatically when needed. Serial IDs increase per model but can have gaps if a later item write fails. Because zero means “not supplied” for an `Int` key, integer serial IDs cannot be explicitly set to zero.
 
 The relation's `references` field must be the target model's primary partition key for a to-one relation, or a declared target index partition key for a to-many relation. Relation reads are explicit and page through to-many results.
+
+TTL attributes must name one scalar `Int` field per model; store expiration times as Unix epoch seconds. Tables use on-demand billing by default. To provision a table and its GSIs, provide positive read and write capacity units as a pair:
+
+```prisma
+model Event {
+  id String @id
+  customerId String
+  expiresAt Int?
+
+  @@table(name: "events", read: 5, write: 2)
+  @@index(name: "ByCustomer", partition: customerId, type: GSI, read: 2, write: 1)
+  @@ttl(field: expiresAt)
+}
+```
+
+Each GSI on a provisioned table needs its own capacity pair. An LSI shares the table's throughput and does not accept capacity arguments.
 
 ## CLI
 
@@ -82,7 +100,7 @@ Use the same release version for `go get` and `go install` when pinning dynamox 
 - `fmt` writes canonical indentation and spacing while retaining comments. `fmt --check` exits nonzero if formatting would change the file.
 - `validate` checks schema names, field types, keys, indexes, and relation read paths without contacting AWS.
 - `generate` validates first, then writes `client_gen.go` into the output directory (or to the exact output file when the path is not a directory).
-- `sync` creates missing tables with on-demand billing and all-attribute index projections. Existing tables are checked for key and index drift; dynamox reports differences without applying changes. Use `--endpoint http://localhost:8000` for DynamoDB Local.
+- `sync` creates missing tables with the declared billing mode and all-attribute index projections. For existing tables, it first checks key and index structure, then reconciles billing mode, table/GSI capacity, and TTL. If a structural difference exists, it reports the drift without applying changes. DynamoDB applies TTL changes asynchronously and limits each table to one TTL configuration update per hour; changing the TTL attribute requires separate disable and enable updates, so rerun `sync` after the reported transition and wait if DynamoDB reports its one-hour rate limit. Use `--endpoint http://localhost:8000` for DynamoDB Local.
 
 ## VS Code
 
@@ -90,7 +108,7 @@ The [`vscode-dynamox`](./vscode-dynamox) extension adds syntax highlighting, com
 
 ## AWS IAM permissions
 
-`fmt`, `validate`, and `generate` are local operations and need no AWS permissions. `sync` needs permission to inspect the tables declared in the schema and create any that are missing. It does not list every table in the account, update existing tables, or delete tables, so it does not need `dynamodb:ListTables`, `dynamodb:UpdateTable`, or `dynamodb:DeleteTable`.
+`fmt`, `validate`, and `generate` are local operations and need no AWS permissions. `sync` needs permission to inspect declared tables, create missing tables, and update billing mode, capacity, and TTL settings on structurally matching existing tables. It does not list every table or delete tables, so it does not need `dynamodb:ListTables` or `dynamodb:DeleteTable`.
 
 For a deployment role that runs `dynamox sync`, allow these actions only on the model table ARNs from `@@table(...)`. Include `dynamox_sequences` when the schema uses `@default(serial)`:
 
@@ -100,7 +118,13 @@ For a deployment role that runs `dynamox sync`, allow these actions only on the 
   "Statement": [{
     "Sid": "DynamoxSyncTables",
     "Effect": "Allow",
-    "Action": ["dynamodb:CreateTable", "dynamodb:DescribeTable"],
+    "Action": [
+      "dynamodb:CreateTable",
+      "dynamodb:DescribeTable",
+      "dynamodb:UpdateTable",
+      "dynamodb:DescribeTimeToLive",
+      "dynamodb:UpdateTimeToLive"
+    ],
     "Resource": [
       "arn:aws:dynamodb:REGION:ACCOUNT_ID:table/<MODEL_TABLE_1>",
       "arn:aws:dynamodb:REGION:ACCOUNT_ID:table/<MODEL_TABLE_2>",
@@ -110,7 +134,7 @@ For a deployment role that runs `dynamox sync`, allow these actions only on the 
 }
 ```
 
-Replace `REGION`, `ACCOUNT_ID`, and the model table placeholders. Omit the sequence table ARN if the schema has no serial IDs. If table creation belongs to a separate deployment role, the application role does not need `CreateTable` or `DescribeTable`.
+Replace `REGION`, `ACCOUNT_ID`, and the model table placeholders. Omit the sequence table ARN if the schema has no serial IDs. If schema synchronization belongs to a separate deployment role, the application role does not need these provisioning actions.
 
 For an application using all generated CRUD, scan, query, relation, and transaction helpers, grant data actions on its model tables. Add `Query` on each secondary index ARN used by the schema. Add `UpdateItem` on `dynamox_sequences` only when the schema uses `@default(serial)`:
 

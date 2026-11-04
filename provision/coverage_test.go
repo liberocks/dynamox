@@ -13,11 +13,17 @@ import (
 )
 
 type scriptedAPI struct {
-	describes     []*dynamodb.DescribeTableOutput
-	describeErrs  []error
-	createErr     error
-	createInput   *dynamodb.CreateTableInput
-	describeCalls int
+	describes      []*dynamodb.DescribeTableOutput
+	describeErrs   []error
+	createErr      error
+	createInput    *dynamodb.CreateTableInput
+	updateErr      error
+	updateInputs   []*dynamodb.UpdateTableInput
+	ttlDescription *types.TimeToLiveDescription
+	ttlErr         error
+	ttlUpdateErr   error
+	ttlUpdates     []*dynamodb.UpdateTimeToLiveInput
+	describeCalls  int
 }
 
 func (f *scriptedAPI) DescribeTable(context.Context, *dynamodb.DescribeTableInput, ...func(*dynamodb.Options)) (*dynamodb.DescribeTableOutput, error) {
@@ -40,6 +46,26 @@ func (f *scriptedAPI) CreateTable(_ context.Context, in *dynamodb.CreateTableInp
 		return nil, f.createErr
 	}
 	return &dynamodb.CreateTableOutput{}, nil
+}
+func (f *scriptedAPI) UpdateTable(_ context.Context, in *dynamodb.UpdateTableInput, _ ...func(*dynamodb.Options)) (*dynamodb.UpdateTableOutput, error) {
+	f.updateInputs = append(f.updateInputs, in)
+	if f.updateErr != nil {
+		return nil, f.updateErr
+	}
+	return &dynamodb.UpdateTableOutput{}, nil
+}
+func (f *scriptedAPI) DescribeTimeToLive(context.Context, *dynamodb.DescribeTimeToLiveInput, ...func(*dynamodb.Options)) (*dynamodb.DescribeTimeToLiveOutput, error) {
+	if f.ttlErr != nil {
+		return nil, f.ttlErr
+	}
+	return &dynamodb.DescribeTimeToLiveOutput{TimeToLiveDescription: f.ttlDescription}, nil
+}
+func (f *scriptedAPI) UpdateTimeToLive(_ context.Context, in *dynamodb.UpdateTimeToLiveInput, _ ...func(*dynamodb.Options)) (*dynamodb.UpdateTimeToLiveOutput, error) {
+	f.ttlUpdates = append(f.ttlUpdates, in)
+	if f.ttlUpdateErr != nil {
+		return nil, f.ttlUpdateErr
+	}
+	return &dynamodb.UpdateTimeToLiveOutput{}, nil
 }
 
 func activeTable() *types.TableDescription {
@@ -71,7 +97,7 @@ func TestSyncAllProvisioningFailuresAndNoop(t *testing.T) {
 	}
 	drift := &scriptedAPI{describes: []*dynamodb.DescribeTableOutput{{Table: activeTable()}}}
 	created, err := Sync(context.Background(), drift, []Table{want, want})
-	if err != nil || len(created) != 0 || drift.describeCalls != 4 {
+	if err != nil || len(created) != 0 || drift.describeCalls != 6 {
 		t.Fatalf("existing tables should be checked independently: %v %v calls=%d", created, err, drift.describeCalls)
 	}
 }

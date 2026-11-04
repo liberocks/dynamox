@@ -29,6 +29,8 @@ type Field struct {
 type Index struct {
 	Name, Partition, Sort, Kind string
 	Pos                         Position
+	ReadCapacityUnits           *int64
+	WriteCapacityUnits          *int64
 }
 type Relation struct {
 	FieldName, Target, Local, Remote, Index string
@@ -42,6 +44,11 @@ type Model struct {
 	Relations                    []Relation
 	Pos                          Position
 	Comment                      string
+	TTL                          string
+	TTLPos                       Position
+	TTLCount                     int
+	ReadCapacityUnits            *int64
+	WriteCapacityUnits           *int64
 }
 type Composite struct {
 	Name    string

@@ -18,6 +18,8 @@ func TestServeValidatesFormatsAndReportsParseErrors(t *testing.T) {
 		`{"id":4,"method":"format","text":"model Account { id String @id @@table(name: \"accounts\")"}`,
 		`{"id":5,"method":"other"}`,
 		`not-json`,
+		`{"id":6,"method":"validate","text":"model Session {\n id String @id\n expiresAt String\n @@table(name: \"sessions\", read: 0, write: 1)\n @@ttl(field: expiresAt)\n}"}`,
+		`{"id":7,"method":"format","text":"model Event{\nid String @id\nexpiresAt Int?\n@@table(name:\"events\",read:5,write:2)\n@@index(name:\"ByExpiry\",partition:expiresAt,type:GSI,read:2,write:1)\n@@ttl(field:expiresAt)\n}"}`,
 	}, "\n")
 	var output strings.Builder
 	if err := serve(strings.NewReader(input), &output); err != nil {
@@ -31,8 +33,8 @@ func TestServeValidatesFormatsAndReportsParseErrors(t *testing.T) {
 		}
 		responses = append(responses, got)
 	}
-	if len(responses) != 6 {
-		t.Fatalf("got %d responses, want 6: %s", len(responses), output.String())
+	if len(responses) != 8 {
+		t.Fatalf("got %d responses, want 8: %s", len(responses), output.String())
 	}
 	if responses[0].ID != 1 || len(responses[0].Diagnostics) == 0 || !strings.Contains(responses[0].Diagnostics[0].Message, "partition key") {
 		t.Fatalf("validation response: %#v", responses[0])
@@ -51,6 +53,12 @@ func TestServeValidatesFormatsAndReportsParseErrors(t *testing.T) {
 	}
 	if !strings.Contains(responses[5].Error, "invalid request") {
 		t.Fatalf("invalid JSON response: %#v", responses[5])
+	}
+	if responses[6].ID != 6 || len(responses[6].Diagnostics) < 2 || !strings.Contains(responses[6].Diagnostics[0].Message, "read capacity") || responses[6].Diagnostics[0].Line != 1 || responses[6].Diagnostics[0].Column != 7 || !strings.Contains(responses[6].Diagnostics[1].Message, "TTL field") || responses[6].Diagnostics[1].Line != 3 {
+		t.Fatalf("TTL/capacity diagnostics: %#v", responses[6])
+	}
+	if responses[7].ID != 7 || len(responses[7].Diagnostics) != 0 || !strings.Contains(responses[7].Formatted, "read: 5, write: 2") || !strings.Contains(responses[7].Formatted, "@@ttl(field: expiresAt)") {
+		t.Fatalf("TTL/capacity formatting: %#v", responses[7])
 	}
 }
 

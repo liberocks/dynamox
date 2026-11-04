@@ -1,6 +1,8 @@
 # Dynamox for VS Code
 
-This extension adds syntax highlighting, schema validation, context-aware completions, and formatting for `.dynamox` files. It bundles the Dynamox editor process, so installed users do not need to install the Dynamox CLI or Go.
+This extension adds syntax highlighting, schema validation, context-aware completions, and formatting for `.dynamox` files, including DynamoDB TTL and provisioned capacity declarations. It bundles the Dynamox editor process, so installed users do not need to install the Dynamox CLI or Go.
+
+Use `@@ttl(field: expiresAt)` to mark a scalar `Int` model field for DynamoDB TTL. TTL values are Unix epoch seconds. Add positive `read` and `write` values to `@@table` to select provisioned capacity, then set both values on each GSI. Tables without capacity values use on-demand billing; LSIs share table capacity. DynamoDB TTL changes are asynchronous and limited to one update per table per hour.
 
 ## Local development
 

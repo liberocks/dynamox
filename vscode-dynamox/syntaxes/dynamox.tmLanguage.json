@@ -8,6 +8,7 @@
     {"include": "#declarations"},
     {"include": "#types"},
     {"include": "#constants"},
+    {"include": "#numbers"},
     {"include": "#punctuation"}
   ],
   "repository": {
@@ -23,7 +24,7 @@
     },
     "model-attributes": {
       "name": "keyword.other.attribute.dynamox",
-      "match": "@@(?:table|index)\\b"
+      "match": "@@(?:table|index|ttl)\\b"
     },
     "field-attributes": {
       "name": "entity.name.function.attribute.dynamox",
@@ -40,6 +41,10 @@
     "constants": {
       "name": "constant.language.dynamox",
       "match": "\\b(?:GSI|LSI|uuidv1|uuidv4|uuidv7|serial|objectid)\\b"
+    },
+    "numbers": {
+      "name": "constant.numeric.dynamox",
+      "match": "\\b-?[0-9]+\\b"
     },
     "punctuation": {
       "name": "punctuation.separator.dynamox",

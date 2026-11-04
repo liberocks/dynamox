@@ -37,6 +37,28 @@ test("suggests model attributes and key fields", () => {
   assert.ok(fieldList.includes("title"));
 });
 
+test("suggests TTL syntax and model fields", () => {
+  const declaration = labels("model Session {\n id String @id\n expiresAt Int?\n @@");
+  assert.ok(declaration.includes("@@ttl"));
+  const args = labels("model Session {\n id String @id\n expiresAt Int?\n @@ttl(");
+  assert.deepEqual(args, ["field:"]);
+  const fields = labels("model Session {\n id String @id\n expiresAt Int?\n @@ttl(field: ");
+  assert.ok(fields.includes("expiresAt"));
+  assert.ok(!fields.includes("id"));
+});
+
+test("suggests throughput arguments for tables and GSIs, but not LSIs", () => {
+  const table = labels("model Item {\n id String @id\n @@table(");
+  assert.ok(table.includes("read:"));
+  assert.ok(table.includes("write:"));
+  const gsi = labels("model Item {\n id String @id\n @@index(type: GSI, ");
+  assert.ok(gsi.includes("read:"));
+  assert.ok(gsi.includes("write:"));
+  const lsi = labels("model Item {\n id String @id\n @@index(type: LSI, ");
+  assert.ok(!lsi.includes("read:"));
+  assert.ok(!lsi.includes("write:"));
+});
+
 test("suggests attribute arguments and related names", () => {
   const text = "model User {\n id String @id\n @@table(name: \"users\")\n}\nmodel Post {\n id String @id\n userId String\n user User @relation(fields: [userId], references: ";
   const suggestions = labels(text);
