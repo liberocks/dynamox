@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  records: read
+  contents: read
 
 jobs:
   package:
@@ -70,7 +70,7 @@ jobs:
     needs: package
     runs-on: ubuntu-latest
     permissions:
-      records: read
+      contents: read
       id-token: write
     steps:
       - name: Set up Node.js
