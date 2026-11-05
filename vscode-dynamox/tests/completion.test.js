@@ -55,6 +55,18 @@ test("suggests TTL syntax and model fields", () => {
   assert.ok(!fields.includes("id"));
 });
 
+test("suggests PITR declaration, enablement, and recovery retention", () => {
+  const declaration = labels("model Item {\n id String @id\n @@");
+  assert.ok(declaration.includes("@@pitr"));
+  const args = labels("model Item {\n id String @id\n @@pitr(");
+  assert.ok(args.includes("enabled: "));
+  assert.ok(args.includes("recoveryDays: "));
+  const enabled = labels("model Item {\n id String @id\n @@pitr(enabled: ");
+  assert.deepEqual(enabled, ["true", "false"]);
+  const days = labels("model Item {\n id String @id\n @@pitr(enabled: true, recoveryDays: ");
+  assert.deepEqual(days, ["35"]);
+});
+
 test("suggests throughput arguments for tables and GSIs, but not LSIs", () => {
   const table = labels("model Item {\n id String @id\n @@table(");
   assert.ok(table.includes("read:"));

@@ -24,7 +24,7 @@
     },
     "model-attributes": {
       "name": "keyword.other.attribute.dynamox",
-      "match": "@@(?:table|index|ttl)\\b"
+      "match": "@@(?:table|index|ttl|pitr)\\b"
     },
     "field-attributes": {
       "name": "entity.name.function.attribute.dynamox",

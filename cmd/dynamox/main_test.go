@@ -65,6 +65,19 @@ func TestGenerateWritesDirectoryOutput(t *testing.T) {
 	}
 }
 
+func TestGeneratePropagatesWriteFailure(t *testing.T) {
+	dir := t.TempDir()
+	schemaPath := filepath.Join(dir, "schema.dynamox")
+	if err := os.WriteFile(schemaPath, []byte(`model User { id String @id @@table(name: "users") }`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	want := errors.New("disk full")
+	err := runGenerateWith([]string{"--out", filepath.Join(dir, "out.go"), schemaPath}, func(string, []byte, os.FileMode) error { return want })
+	if !errors.Is(err, want) {
+		t.Fatalf("write failure = %v", err)
+	}
+}
+
 func TestValidateIncludesFileLineAndColumn(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "invalid.dynamox")
@@ -100,6 +113,12 @@ func TestCommandDispatchAndMainExit(t *testing.T) {
 	}
 	if err := run([]string{"sync", "/missing/dynamox.schema"}); err == nil {
 		t.Fatal("sync dispatch should surface schema read error")
+	}
+	if err := run([]string{"backup"}); err == nil {
+		t.Fatal("backup dispatch should surface usage")
+	}
+	if err := run([]string{"restore"}); err == nil {
+		t.Fatal("restore dispatch should surface usage")
 	}
 	called := -1
 	mainWithExit([]string{"help"}, func(code int) { called = code })
@@ -405,7 +424,7 @@ func TestProvisionTablesAndScalarMapping(t *testing.T) {
 }
 
 func TestSerialSchemaProvisionsSharedSequenceTable(t *testing.T) {
-	s, err := schema.Parse(`model Item { id Int @id @default(serial) value String @@table(name: "items") }`)
+	s, err := schema.Parse(`model Item { id Int @id @default(serial) value String @@table(name: "items") @@pitr(enabled: true, recoveryDays: 14) }`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -413,7 +432,7 @@ func TestSerialSchemaProvisionsSharedSequenceTable(t *testing.T) {
 		t.Fatalf("schema diagnostics: %v", ds)
 	}
 	tables := provisionTables(s)
-	if len(tables) != 2 || tables[1].Name != runtime.SequenceTableName || tables[1].Partition.Name != "name" || tables[1].Partition.Type != "S" {
+	if len(tables) != 2 || tables[1].Name != runtime.SequenceTableName || tables[1].Partition.Name != "name" || tables[1].Partition.Type != "S" || tables[1].PITR == nil || !tables[1].PITR.Enabled || tables[1].PITR.RecoveryDays != 14 || !tables[1].PITR.PreserveLonger {
 		t.Fatalf("sequence provisioning: %#v", tables)
 	}
 }

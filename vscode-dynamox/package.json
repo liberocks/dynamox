@@ -2,7 +2,7 @@
   "name": "dynamox-vscode",
   "displayName": "Dynamox",
   "description": "Language support for Dynamox schemas with validation, completions, and formatting.",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "publisher": "dynamox",
   "icon": "images/icon.png",
   "repository": {

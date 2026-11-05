@@ -149,6 +149,17 @@ func Validate(s *Schema) []Diagnostic {
 		if m.TTLCount > 1 {
 			add(m.TTLPos, "model may declare only one @@ttl")
 		}
+		if m.PITRCount > 1 {
+			add(m.PITRPos, "model may declare only one @@pitr")
+		}
+		if m.PITR != nil {
+			if m.PITR.Enabled && (m.PITR.RecoveryDays < 1 || m.PITR.RecoveryDays > 35) {
+				add(m.PITRPos, "PITR recoveryDays must be between 1 and 35")
+			}
+			if !m.PITR.Enabled && m.PITR.RecoveryDaysSpecified {
+				add(m.PITRPos, "PITR recoveryDays is only valid when enabled is true")
+			}
+		}
 		if m.TTLCount > 0 {
 			if m.TTL == "" {
 				add(m.TTLPos, "@@ttl requires field: fieldName")
@@ -542,6 +553,9 @@ func sharedTableConflict(a, b Model, s *Schema) string {
 	if a.TTL != "" && b.TTL != "" && a.TTL != b.TTL {
 		return "TTL attributes differ"
 	}
+	if a.PITR != nil && b.PITR != nil && !samePITR(*a.PITR, *b.PITR) {
+		return "PITR declarations differ"
+	}
 	byName := map[string]Index{}
 	for _, ix := range a.Indexes {
 		if ix.Kind == "" {
@@ -574,6 +588,10 @@ func sharedTableConflict(a, b Model, s *Schema) string {
 		}
 	}
 	return ""
+}
+
+func samePITR(a, b PITR) bool {
+	return a.Enabled == b.Enabled && (!a.Enabled || a.RecoveryDays == b.RecoveryDays)
 }
 func capacityValue(v *int64) int64 {
 	if v == nil {

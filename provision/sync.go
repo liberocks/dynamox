@@ -23,6 +23,10 @@ type API interface {
 	DescribeTimeToLive(context.Context, *dynamodb.DescribeTimeToLiveInput, ...func(*dynamodb.Options)) (*dynamodb.DescribeTimeToLiveOutput, error)
 	UpdateTimeToLive(context.Context, *dynamodb.UpdateTimeToLiveInput, ...func(*dynamodb.Options)) (*dynamodb.UpdateTimeToLiveOutput, error)
 }
+type ContinuousBackupsAPI interface {
+	DescribeContinuousBackups(context.Context, *dynamodb.DescribeContinuousBackupsInput, ...func(*dynamodb.Options)) (*dynamodb.DescribeContinuousBackupsOutput, error)
+	UpdateContinuousBackups(context.Context, *dynamodb.UpdateContinuousBackupsInput, ...func(*dynamodb.Options)) (*dynamodb.UpdateContinuousBackupsOutput, error)
+}
 type Key struct {
 	Name string
 	Type types.ScalarAttributeType
@@ -40,6 +44,12 @@ type Table struct {
 	Indexes                               []Index
 	ReadCapacityUnits, WriteCapacityUnits int64
 	TTL                                   string
+	PITR                                  *PITRConfig
+}
+type PITRConfig struct {
+	Enabled        bool
+	RecoveryDays   int32
+	PreserveLonger bool
 }
 
 // Sync creates missing tables and reconciles capacity and TTL on structurally matching tables.
@@ -51,6 +61,7 @@ func Sync(ctx context.Context, db API, tables []Table) ([]string, error) {
 	}
 	created := []string{}
 	pending := []string{}
+	pendingPITR := []Table{}
 	for _, want := range tables {
 		out, err := db.DescribeTable(ctx, &dynamodb.DescribeTableInput{TableName: aws.String(want.Name)})
 		if err != nil {
@@ -68,6 +79,13 @@ func Sync(ctx context.Context, db API, tables []Table) ([]string, error) {
 			}
 			if ttlPending {
 				pending = append(pending, ttlPendingMessage(want.Name))
+			}
+			_, pitrErr := reconcilePITR(ctx, db, want)
+			if pitrErr != nil {
+				if !continuousBackupsUnavailable(pitrErr) {
+					return created, pitrErr
+				}
+				pendingPITR = append(pendingPITR, want)
 			}
 			continue
 		}
@@ -94,11 +112,36 @@ func Sync(ctx context.Context, db API, tables []Table) ([]string, error) {
 		if ttlPending {
 			pending = append(pending, ttlPendingMessage(want.Name))
 		}
+		_, pitrErr := reconcilePITR(ctx, db, want)
+		if pitrErr != nil {
+			if !continuousBackupsUnavailable(pitrErr) {
+				return created, pitrErr
+			}
+			pendingPITR = append(pendingPITR, want)
+		}
+	}
+	for _, want := range pendingPITR {
+		_, err := reconcilePITR(ctx, db, want)
+		if err != nil {
+			if !continuousBackupsUnavailable(err) {
+				return created, err
+			}
+			pending = append(pending, pitrPendingMessage(want.Name))
+		}
 	}
 	if len(pending) > 0 {
 		return created, fmt.Errorf("%s", strings.Join(pending, "; "))
 	}
 	return created, nil
+}
+
+func continuousBackupsUnavailable(err error) bool {
+	var unavailable *types.ContinuousBackupsUnavailableException
+	return errors.As(err, &unavailable)
+}
+
+func pitrPendingMessage(table string) string {
+	return fmt.Sprintf("PITR change is in progress for table %s; rerun sync after continuous backups initialize", table)
 }
 
 func mergeTables(tables []Table) ([]Table, error) {
@@ -120,6 +163,12 @@ func mergeTables(tables []Table) ([]Table, error) {
 		}
 		if old.TTL == "" {
 			old.TTL = t.TTL
+		}
+		if old.PITR != nil && t.PITR != nil && (old.PITR.Enabled != t.PITR.Enabled || (old.PITR.Enabled && old.PITR.RecoveryDays != t.PITR.RecoveryDays)) {
+			return nil, fmt.Errorf("table %s has conflicting PITR declarations", t.Name)
+		}
+		if old.PITR == nil {
+			old.PITR = t.PITR
 		}
 		indexes := map[string]Index{}
 		for _, ix := range old.Indexes {
@@ -148,6 +197,49 @@ func mergeTables(tables []Table) ([]Table, error) {
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
 }
+
+func reconcilePITR(ctx context.Context, db API, want Table) (bool, error) {
+	if want.PITR == nil {
+		return false, nil
+	}
+	backupAPI, ok := db.(ContinuousBackupsAPI)
+	if !ok {
+		return false, fmt.Errorf("table %s declares PITR but the DynamoDB client does not support continuous backups", want.Name)
+	}
+	described, err := backupAPI.DescribeContinuousBackups(ctx, &dynamodb.DescribeContinuousBackupsInput{TableName: aws.String(want.Name)})
+	if err != nil {
+		return false, fmt.Errorf("describe table %s PITR: %w", want.Name, err)
+	}
+	if described == nil || described.ContinuousBackupsDescription == nil {
+		return false, fmt.Errorf("describe table %s PITR returned no description", want.Name)
+	}
+	description := described.ContinuousBackupsDescription.PointInTimeRecoveryDescription
+	status := types.PointInTimeRecoveryStatusDisabled
+	days := int32(0)
+	if description != nil {
+		status = description.PointInTimeRecoveryStatus
+		if description.RecoveryPeriodInDays != nil {
+			days = *description.RecoveryPeriodInDays
+		}
+	}
+	if want.PITR.Enabled && status == types.PointInTimeRecoveryStatusEnabled && (days == want.PITR.RecoveryDays || (want.PITR.PreserveLonger && days > want.PITR.RecoveryDays)) {
+		return false, nil
+	}
+	if !want.PITR.Enabled && status == types.PointInTimeRecoveryStatusDisabled {
+		return false, nil
+	}
+	spec := &types.PointInTimeRecoverySpecification{PointInTimeRecoveryEnabled: aws.Bool(want.PITR.Enabled)}
+	if want.PITR.Enabled {
+		spec.RecoveryPeriodInDays = aws.Int32(want.PITR.RecoveryDays)
+	}
+	updated, err := backupAPI.UpdateContinuousBackups(ctx, &dynamodb.UpdateContinuousBackupsInput{TableName: aws.String(want.Name), PointInTimeRecoverySpecification: spec})
+	if err != nil {
+		return false, fmt.Errorf("update table %s PITR: %w", want.Name, err)
+	}
+	_ = updated
+	return false, nil
+}
+
 func sameIndex(a, b Index) bool {
 	return a.Name == b.Name && a.Partition.Name == b.Partition.Name && a.Partition.Type == b.Partition.Type && a.Sort.Name == b.Sort.Name && a.Sort.Type == b.Sort.Type && a.Local == b.Local && a.ReadCapacityUnits == b.ReadCapacityUnits && a.WriteCapacityUnits == b.WriteCapacityUnits
 }

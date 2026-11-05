@@ -389,6 +389,32 @@ func (p *parser) parseModelAttr(m *Model) error {
 		m.TTL = unquote(args["field"])
 		m.TTLPos = a.pos
 		m.TTLCount++
+	case "pitr":
+		for key := range args {
+			if key != "enabled" && key != "recoveryDays" {
+				return fmt.Errorf("%d:%d: unknown @@pitr argument %q", a.pos.Line, a.pos.Column, key)
+			}
+		}
+		enabledText, ok := args["enabled"]
+		if !ok {
+			return fmt.Errorf("%d:%d: @@pitr requires enabled: true or false", a.pos.Line, a.pos.Column)
+		}
+		enabled, parseErr := strconv.ParseBool(enabledText)
+		if parseErr != nil {
+			return fmt.Errorf("%d:%d: @@pitr enabled must be true or false", a.pos.Line, a.pos.Column)
+		}
+		policy := &PITR{Enabled: enabled, RecoveryDays: 35}
+		if daysText, exists := args["recoveryDays"]; exists {
+			days, daysErr := strconv.ParseInt(daysText, 10, 32)
+			if daysErr != nil {
+				return fmt.Errorf("%d:%d: @@pitr recoveryDays must be an integer", a.pos.Line, a.pos.Column)
+			}
+			policy.RecoveryDays = int32(days)
+			policy.RecoveryDaysSpecified = true
+		}
+		m.PITR = policy
+		m.PITRPos = a.pos
+		m.PITRCount++
 	default:
 		return fmt.Errorf("%d:%d: unknown model attribute @@%s", a.pos.Line, a.pos.Column, a.text)
 	}

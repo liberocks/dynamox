@@ -110,6 +110,12 @@ func TestSyncMergesSharedTableDeclarationsOnce(t *testing.T) {
 	if _, err := mergeTables([]Table{a, b}); err == nil {
 		t.Fatal("conflicting shared TTL declarations should fail")
 	}
+	a.TTL, b.TTL = "", ""
+	a.PITR = &PITRConfig{Enabled: true, RecoveryDays: 7}
+	b.PITR = &PITRConfig{Enabled: false}
+	if _, err := mergeTables([]Table{a, b}); err == nil {
+		t.Fatal("conflicting shared PITR declarations should fail")
+	}
 	b = a
 	b.ReadCapacityUnits = 1
 	if _, err := mergeTables([]Table{a, b}); err == nil {

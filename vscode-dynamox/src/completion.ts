@@ -60,10 +60,11 @@ export function complete(text: string, offset: number): CompletionEntry[] {
     add("@@table", "@@table(name: ${1:\"table_name\"})", "Set the DynamoDB table", "snippet");
     add("@@index", "@@index(name: ${1:\"ByField\"}, partition: ${2:field}, type: GSI)", "Declare a global secondary index", "snippet");
     add("@@ttl", "@@ttl(field: ${1:expiresAt})", "Set the DynamoDB TTL field", "snippet");
+    add("@@pitr", "@@pitr(enabled: true, recoveryDays: 35)", "Configure point-in-time recovery", "snippet");
     return completions;
   }
 
-  const modelCall = callPrefix.match(/@@(table|index|ttl)\(([^)]*)$/);
+  const modelCall = callPrefix.match(/@@(table|index|ttl|pitr)\(([^)]*)$/);
   if (modelCall) {
     const attr = modelCall[1];
     const args = modelCall[2];
@@ -76,6 +77,18 @@ export function complete(text: string, offset: number): CompletionEntry[] {
         return completions;
       }
       if (!/(?:^|,)\s*field\s*:/.test(args)) add("field:", "field: ", "TTL argument", "property");
+      return completions;
+    }
+    if (attr === "pitr") {
+      if (currentArg.startsWith("enabled:")) {
+        add("true", "true", "Enable point-in-time recovery", "constant");
+        add("false", "false", "Disable point-in-time recovery", "constant");
+      } else if (currentArg.startsWith("recoveryDays:")) {
+        add("35", "35", "Default PITR retention in days (1–35)", "constant");
+      } else {
+        if (!/(?:^|,)\s*enabled\s*:/.test(args)) add("enabled: ", "enabled: true", "PITR argument", "property");
+        if (!/(?:^|,)\s*recoveryDays\s*:/.test(args)) add("recoveryDays: ", "recoveryDays: 35", "PITR retention argument", "property");
+      }
       return completions;
     }
     if (currentArg.startsWith("type:")) {
@@ -161,6 +174,7 @@ export function complete(text: string, offset: number): CompletionEntry[] {
     add("@@table", "@@table(name: ${1:\"table_name\"})", "Set the DynamoDB table", "snippet");
     add("@@index", "@@index(name: ${1:\"ByField\"}, partition: ${2:field}, type: GSI)", "Declare a global secondary index", "snippet");
     add("@@ttl", "@@ttl(field: ${1:expiresAt})", "Set the DynamoDB TTL field", "snippet");
+    add("@@pitr", "@@pitr(enabled: true, recoveryDays: 35)", "Configure point-in-time recovery", "snippet");
     return completions;
   }
   if (block.kind === "type" && trimmed === "") {

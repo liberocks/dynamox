@@ -47,8 +47,18 @@ type Model struct {
 	TTL                          string
 	TTLPos                       Position
 	TTLCount                     int
+	PITR                         *PITR
+	PITRPos                      Position
+	PITRCount                    int
 	ReadCapacityUnits            *int64
 	WriteCapacityUnits           *int64
+}
+
+// PITR declares the point-in-time recovery policy for a physical table.
+type PITR struct {
+	Enabled               bool
+	RecoveryDays          int32
+	RecoveryDaysSpecified bool
 }
 type Composite struct {
 	Name    string

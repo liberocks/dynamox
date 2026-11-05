@@ -91,6 +91,18 @@ model Event {
 
 Each GSI on a provisioned table needs its own capacity pair. An LSI shares the table's throughput and does not accept capacity arguments.
 
+Declare point-in-time recovery with `@@pitr(enabled: true)`. Recovery retention defaults to 35 days and can be set from 1 through 35 days:
+
+```prisma
+model AuditEvent {
+  id String @id
+  @@table(name: "audit_events")
+  @@pitr(enabled: true, recoveryDays: 14)
+}
+```
+
+`dynamox sync` manages PITR only for tables with an explicit `@@pitr` declaration. Tables without the declaration keep their current AWS setting. If PITR is enabled for a model that uses `@default(serial)`, Dynamox also enables PITR on the shared `dynamox_sequences` table using the longest configured retention; it does not automatically disable that shared table's PITR or shorten its longer retention. DynamoDB can briefly report continuous backups as unavailable while a new table initializes; if `sync` reports PITR is still in progress, rerun it after initialization.
+
 ## CLI
 
 Use dynamox as a dependency from your application repository. Add the Go module to the application and install the standalone CLI once:
@@ -118,6 +130,30 @@ Use the same release version for `go get` and `go install` when pinning dynamox 
 - `validate` checks schema names, field types, keys, indexes, and relation read paths without contacting AWS.
 - `generate` validates first, then writes `client_gen.go` into the output directory (or to the exact output file when the path is not a directory).
 - `sync` creates missing tables with the declared billing mode and all-attribute index projections. For existing tables, it first checks key and index structure, then reconciles billing mode, table/GSI capacity, and TTL. If a structural difference exists, it reports the drift without applying changes. DynamoDB applies TTL changes asynchronously and limits each table to one TTL configuration update per hour; changing the TTL attribute requires separate disable and enable updates, so rerun `sync` after the reported transition and wait if DynamoDB reports its one-hour rate limit. Use `--endpoint http://localhost:8000` for DynamoDB Local.
+- `sync` also reconciles PITR for tables declaring `@@pitr`. Changes made directly in AWS to a declared PITR setting are reconciled on the next `sync`.
+
+### Backups and restore
+
+On-demand backup commands work across every distinct physical table declared by the schema, including `dynamox_sequences` when serial IDs are used. Create a manifest outside the source repository; it contains backup ARNs and should be treated as operational state:
+
+```sh
+dynamox backup create --name release-2026-11-05 --manifest /tmp/dynamox-backup.json --writes-paused --profile my-aws-profile --region us-east-1 ./schema.dynamox
+dynamox backup status --manifest /tmp/dynamox-backup.json --profile my-aws-profile --region us-east-1
+dynamox backup list --profile my-aws-profile --region us-east-1 ./schema.dynamox
+```
+
+Stop application writes and let in-flight writes drain before creating a set. The command waits 60 seconds before requesting backups and waits for each backup to become available. Keep writes paused until it completes. On-demand backups are independent per table and do not provide a cross-table transaction snapshot.
+
+Restore a full set or a point in time to new tables by supplying a unique suffix. Restore commands wait for the tables to become active, then reapply the schema's capacity, TTL, and PITR settings. They print a `tableNames` map compatible with `runtime.ClientOptions.TableNames` for application cutover. Keep writers paused while validating restored data and the serial counter, then deploy the mapping before resuming writes.
+
+```sh
+dynamox restore backup --manifest /tmp/dynamox-backup.json --state /tmp/dynamox-restore.json --suffix recovery-20261105 --writes-paused --profile my-aws-profile --region us-east-1 ./schema.dynamox
+dynamox restore pitr --at 2026-11-05T03:00:00Z --state /tmp/dynamox-pitr-restore.json --suffix recovery-20261105 --writes-paused --profile my-aws-profile --region us-east-1 ./schema.dynamox
+dynamox restore status --state /tmp/dynamox-restore.json --profile my-aws-profile --region us-east-1
+dynamox restore resume --state /tmp/dynamox-restore.json --writes-paused --profile my-aws-profile --region us-east-1 ./schema.dynamox
+```
+
+The requested PITR instant must fall within every table's currently available recovery window; the CLI checks their common interval before starting. A shared timestamp does not make separate tables an atomic application snapshot, so validate cross-table relationships and serial counters before cutover. Restores create new tables and never overwrite existing tables. Restore state files let an interrupted restore be inspected or resumed; they should remain outside source control. DynamoDB does not restore TTL or PITR settings automatically, so the CLI reapplies declarations from the schema after restoration. AWS-managed settings such as tags, streams, autoscaling, alarms, and IAM policies may need separate recovery.
 
 ## VS Code
 
@@ -125,7 +161,7 @@ The [`vscode-dynamox`](./vscode-dynamox) extension adds syntax highlighting, com
 
 ## AWS IAM permissions
 
-`fmt`, `validate`, and `generate` are local operations and need no AWS permissions. `sync` needs permission to inspect declared tables, create missing tables, and update billing mode, capacity, and TTL settings on structurally matching existing tables. It does not list every table or delete tables, so it does not need `dynamodb:ListTables` or `dynamodb:DeleteTable`.
+`fmt`, `validate`, and `generate` are local operations and need no AWS permissions. `sync` needs permission to inspect declared tables, create missing tables, and update billing mode, capacity, and TTL settings on structurally matching existing tables. If the schema declares PITR, add `dynamodb:DescribeContinuousBackups` and `dynamodb:UpdateContinuousBackups` to the sync policy. It does not list every table or delete tables, so it does not need `dynamodb:ListTables` or `dynamodb:DeleteTable`.
 
 For a deployment role that runs `dynamox sync`, allow these actions only on the model table ARNs from `@@table(...)`. Include `dynamox_sequences` when the schema uses `@default(serial)`:
 
@@ -152,6 +188,77 @@ For a deployment role that runs `dynamox sync`, allow these actions only on the 
 ```
 
 Replace `REGION`, `ACCOUNT_ID`, and the model table placeholders. Omit the sequence table ARN if the schema has no serial IDs. If schema synchronization belongs to a separate deployment role, the application role does not need these provisioning actions.
+
+When a schema declares `@@pitr`, add this statement on those tables (and on `dynamox_sequences` when serial ID PITR is enabled):
+
+```json
+{
+  "Effect": "Allow",
+  "Action": ["dynamodb:DescribeContinuousBackups", "dynamodb:UpdateContinuousBackups"],
+  "Resource": [
+    "arn:aws:dynamodb:REGION:ACCOUNT_ID:table/<PITR_TABLE_1>",
+    "arn:aws:dynamodb:REGION:ACCOUNT_ID:table/dynamox_sequences"
+  ]
+}
+```
+
+For `backup create`, `backup list`, restore, progress checks, and schema-setting reconciliation after restore, use a separate operator policy. Restrict table resources to the schema's source tables and the specific recovery destination table names. `ListBackups` requires `Resource: "*"`; scope other actions to table and backup ARNs:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DynamoxBackupSources",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:CreateBackup",
+        "dynamodb:DescribeTable",
+        "dynamodb:DescribeContinuousBackups",
+        "dynamodb:RestoreTableToPointInTime"
+      ],
+      "Resource": [
+        "arn:aws:dynamodb:REGION:ACCOUNT_ID:table/<SOURCE_TABLE_1>",
+        "arn:aws:dynamodb:REGION:ACCOUNT_ID:table/<SOURCE_TABLE_2>"
+      ]
+    },
+    {
+      "Sid": "DynamoxListBackups",
+      "Effect": "Allow",
+      "Action": "dynamodb:ListBackups",
+      "Resource": "*"
+    },
+    {
+      "Sid": "DynamoxRestoreFromBackups",
+      "Effect": "Allow",
+      "Action": ["dynamodb:DescribeBackup", "dynamodb:RestoreTableFromBackup"],
+      "Resource": "arn:aws:dynamodb:REGION:ACCOUNT_ID:table/*/backup/*"
+    },
+    {
+      "Sid": "DynamoxRestoreDestinations",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:DescribeTable",
+        "dynamodb:BatchWriteItem",
+        "dynamodb:GetItem",
+        "dynamodb:PutItem",
+        "dynamodb:UpdateItem",
+        "dynamodb:DeleteItem",
+        "dynamodb:Query",
+        "dynamodb:Scan",
+        "dynamodb:UpdateTable",
+        "dynamodb:DescribeTimeToLive",
+        "dynamodb:UpdateTimeToLive",
+        "dynamodb:DescribeContinuousBackups",
+        "dynamodb:UpdateContinuousBackups"
+      ],
+      "Resource": "arn:aws:dynamodb:REGION:ACCOUNT_ID:table/<RESTORE_TABLE_PREFIX>*"
+    }
+  ]
+}
+```
+
+`RestoreTableFromBackup` must be authorized on the source backup and DynamoDB also requires the listed data permissions on the destination table. `RestoreTableToPointInTime` applies to the source table and likewise needs the destination data permissions. Add `dynamodb:DeleteBackup` on test backup ARNs and `dynamodb:DeleteTable` on isolated test table ARNs, including both source and restored tables, only to a dedicated test role if automated cleanup is required. The Dynamox restore commands do not delete source backups or tables.
 
 For an application using all generated CRUD, scan, query, relation, and transaction helpers, grant data actions on its model tables. Add `Query` on each secondary index ARN used by the schema. Add `UpdateItem` on `dynamox_sequences` only when the schema uses `@default(serial)`:
 
